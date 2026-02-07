@@ -2,7 +2,6 @@ package com.example.mcp.server.config;
 
 import com.example.mcp.server.tool.DatabaseTools;
 import com.example.mcp.server.tool.OrderTools;
-import com.example.mcp.server.tool.WeatherTools;
 import org.springframework.ai.tool.ToolCallbackProvider;
 import org.springframework.ai.tool.method.MethodToolCallbackProvider;
 import org.springframework.context.annotation.Bean;
@@ -15,13 +14,6 @@ import org.springframework.context.annotation.Configuration;
  */
 @Configuration
 public class McpToolConfig {
-
-    @Bean
-    public ToolCallbackProvider weatherToolProvider(WeatherTools weatherTools) {
-        return MethodToolCallbackProvider.builder()
-                .toolObjects(weatherTools)
-                .build();
-    }
 
     @Bean
     public ToolCallbackProvider databaseToolProvider(DatabaseTools databaseTools) {

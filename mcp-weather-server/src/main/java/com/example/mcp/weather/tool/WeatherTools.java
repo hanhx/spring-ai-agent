@@ -1,4 +1,4 @@
-package com.example.mcp.server.tool;
+package com.example.mcp.weather.tool;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

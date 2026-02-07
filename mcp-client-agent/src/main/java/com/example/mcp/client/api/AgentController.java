@@ -102,16 +102,25 @@ public class AgentController {
 
     /**
      * 手动重连 MCP Server（Server 重启后调用）
+     * 可选参数 server：指定重连某个 Server，不传则重连所有
      */
     @PostMapping("/reconnect")
-    public Mono<ResponseEntity<Map<String, Object>>> reconnect() {
+    public Mono<ResponseEntity<Map<String, Object>>> reconnect(
+            @RequestParam(required = false) String server) {
         return Mono.fromCallable(() -> {
-            boolean ok = mcpManager.reconnect();
-            Map<String, Object> body = Map.of(
-                    "success", ok,
-                    "message", ok ? "MCP Server 重连成功" : "MCP Server 重连失败"
-            );
-            return ResponseEntity.ok(body);
+            if (server != null && !server.isBlank()) {
+                boolean ok = mcpManager.reconnect(server);
+                return ResponseEntity.ok(Map.<String, Object>of(
+                        "success", ok,
+                        "message", ok ? "Server [" + server + "] 重连成功" : "Server [" + server + "] 重连失败"
+                ));
+            } else {
+                mcpManager.reconnectAll();
+                return ResponseEntity.ok(Map.<String, Object>of(
+                        "success", true,
+                        "message", "所有 MCP Server 已重连"
+                ));
+            }
         }).subscribeOn(Schedulers.boundedElastic());
     }
 }

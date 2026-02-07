@@ -19,19 +19,14 @@ spring:
           temperature: 0.7
           max-tokens: 4096
 
-    # MCP Client 配置 —— 连接 MCP Server
+    # MCP Client 配置
     mcp:
       client:
-        enabled: true
-        name: agent-mcp-client
-        version: 1.0.0
         request-timeout: 30s
-        type: SYNC
-        # 通过 SSE 连接 MCP Server
-        sse:
-          connections:
-            business-server:
-              url: http://localhost:8081
+
+# 自管理的 MCP Server 连接列表（McpConnectionManager 读取）
+mcp:
+  servers: "{'business-server': 'http://localhost:8081', 'weather-server': 'http://localhost:8082'}"
 
 logging:
   level:
