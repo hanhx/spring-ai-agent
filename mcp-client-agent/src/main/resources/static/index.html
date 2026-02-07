@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spring AI Agent</title>
+    <script src="/marked.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f0f2f5;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* 顶部导航 */
+        .header {
+            background: #fff;
+            padding: 16px 24px;
+            border-bottom: 1px solid #e8e8e8;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+        }
+        .header h1 {
+            font-size: 18px;
+            font-weight: 600;
+            color: #1a1a1a;
+        }
+        .header .subtitle {
+            font-size: 13px;
+            color: #888;
+        }
+        .header .status {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+            color: #52c41a;
+        }
+        .header .status::before {
+            content: '';
+            width: 8px;
+            height: 8px;
+            background: #52c41a;
+            border-radius: 50%;
+        }
+
+        /* 聊天区域 */
+        .chat-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .message {
+            display: flex;
+            gap: 12px;
+            max-width: 80%;
+            animation: fadeIn 0.3s ease;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .message.user { align-self: flex-end; flex-direction: row-reverse; }
+        .message.assistant { align-self: flex-start; }
+
+        .avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            flex-shrink: 0;
+        }
+        .message.user .avatar { background: #1677ff; color: #fff; }
+        .message.assistant .avatar { background: #f0f0f0; }
+
+        .bubble {
+            padding: 12px 16px;
+            border-radius: 12px;
+            font-size: 14px;
+            line-height: 1.6;
+            word-break: break-word;
+            white-space: pre-wrap;
+        }
+        .message.user .bubble {
+            background: #1677ff;
+            color: #fff;
+            border-bottom-right-radius: 4px;
+        }
+        .message.assistant .bubble {
+            background: #fff;
+            color: #1a1a1a;
+            border-bottom-left-radius: 4px;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+        }
+
+        .skill-tag {
+            display: inline-block;
+            font-size: 11px;
+            color: #1677ff;
+            background: #e6f4ff;
+            padding: 2px 8px;
+            border-radius: 4px;
+            margin-bottom: 6px;
+        }
+
+        /* 加载动画 */
+        .typing {
+            display: flex;
+            gap: 4px;
+            padding: 12px 16px;
+        }
+        .typing span {
+            width: 8px;
+            height: 8px;
+            background: #ccc;
+            border-radius: 50%;
+            animation: bounce 1.4s infinite ease-in-out;
+        }
+        .typing span:nth-child(1) { animation-delay: 0s; }
+        .typing span:nth-child(2) { animation-delay: 0.2s; }
+        .typing span:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes bounce {
+            0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+            40% { transform: scale(1); opacity: 1; }
+        }
+
+        /* 输入区域 */
+        .input-area {
+            background: #fff;
+            padding: 16px 24px;
+            border-top: 1px solid #e8e8e8;
+            display: flex;
+            gap: 12px;
+            align-items: flex-end;
+        }
+        .input-area textarea {
+            flex: 1;
+            border: 1px solid #d9d9d9;
+            border-radius: 8px;
+            padding: 10px 14px;
+            font-size: 14px;
+            font-family: inherit;
+            resize: none;
+            outline: none;
+            max-height: 120px;
+            line-height: 1.5;
+            transition: border-color 0.2s;
+        }
+        .input-area textarea:focus {
+            border-color: #1677ff;
+            box-shadow: 0 0 0 2px rgba(22,119,255,0.1);
+        }
+        .input-area button {
+            background: #1677ff;
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            padding: 10px 20px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: background 0.2s;
+            white-space: nowrap;
+        }
+        .input-area button:hover { background: #4096ff; }
+        .input-area button:disabled {
+            background: #d9d9d9;
+            cursor: not-allowed;
+        }
+
+        /* 快捷提问 */
+        .quick-actions {
+            padding: 12px 24px;
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            background: #fff;
+        }
+        .quick-btn {
+            background: #f5f5f5;
+            border: 1px solid #e8e8e8;
+            border-radius: 16px;
+            padding: 6px 14px;
+            font-size: 13px;
+            color: #555;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .quick-btn:hover {
+            background: #e6f4ff;
+            border-color: #1677ff;
+            color: #1677ff;
+        }
+
+        /* Plan & Action 样式 */
+        .plan-action {
+            font-size: 13px;
+            color: #666;
+            margin-top: 8px;
+        }
+        .plan-status {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 10px;
+            color: #666;
+            background: #f0f0f0;
+            border-radius: 6px;
+            margin: 4px 0;
+        }
+        .plan-status .spinner {
+            width: 14px;
+            height: 14px;
+            border: 2px solid #e8e8e8;
+            border-top-color: #1677ff;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .plan-steps {
+            margin: 8px 0;
+            padding: 0;
+            list-style: none;
+        }
+        .plan-steps li {
+            padding: 6px 0;
+            font-size: 13px;
+            border-bottom: 1px solid #f5f5f5;
+        }
+        .plan-steps li:last-child { border-bottom: none; }
+        .plan-steps li .step-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .plan-steps li .step-icon {
+            width: 18px;
+            height: 18px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            flex-shrink: 0;
+        }
+        .plan-steps li .step-result {
+            margin: 4px 0 4px 26px;
+            padding: 6px 10px;
+            background: #f9f9f9;
+            border-radius: 4px;
+            font-size: 12px;
+            color: #555;
+            max-height: 300px;
+            overflow-y: auto;
+            display: none;
+        }
+        .plan-steps li .step-result.show { display: block; }
+        .plan-steps li.pending { color: #bbb; }
+        .plan-steps li.running { color: #1677ff; font-weight: 500; }
+        .plan-steps li.done { color: #52c41a; }
+        .plan-divider {
+            border-top: 1px solid #f0f0f0;
+            margin: 10px 0;
+        }
+        .result-content {
+            line-height: 1.6;
+        }
+        .result-content p { margin: 0.5em 0; }
+        .result-content h1, .result-content h2, .result-content h3 { margin: 0.6em 0 0.3em; }
+        .result-content ul, .result-content ol { padding-left: 1.5em; margin: 0.4em 0; }
+        .result-content li { margin: 0.2em 0; }
+        .result-content code {
+            background: #f5f5f5; padding: 1px 4px; border-radius: 3px; font-size: 0.9em;
+        }
+        .result-content pre {
+            background: #f5f5f5; padding: 10px; border-radius: 6px;
+            overflow-x: auto; margin: 0.5em 0;
+        }
+        .result-content pre code { background: none; padding: 0; }
+        .result-content table {
+            border-collapse: collapse; margin: 0.5em 0; width: 100%; font-size: 13px;
+        }
+        .result-content th, .result-content td {
+            border: 1px solid #e8e8e8; padding: 6px 10px; text-align: left;
+        }
+        .result-content th { background: #fafafa; font-weight: 600; }
+        .result-content blockquote {
+            border-left: 3px solid #d9d9d9; padding-left: 10px; color: #666; margin: 0.5em 0;
+        }
+        .observe-tag {
+            display: block;
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 4px;
+            margin: 4px 0 2px 26px;
+        }
+        .observe-tag.ok {
+            color: #52c41a;
+            background: #f6ffed;
+        }
+        .observe-tag.replan {
+            color: #fa8c16;
+            background: #fff7e6;
+        }
+        .replan-banner {
+            background: #fff7e6;
+            border: 1px solid #ffd591;
+            border-radius: 6px;
+            padding: 8px 12px;
+            margin: 8px 0;
+            font-size: 12px;
+            color: #d46b08;
+        }
+        .replan-banner strong {
+            display: block;
+            margin-bottom: 4px;
+        }
+
+        /* 欢迎消息 */
+        .welcome {
+            text-align: center;
+            padding: 60px 20px;
+            color: #888;
+        }
+        .welcome h2 {
+            font-size: 20px;
+            color: #333;
+            margin-bottom: 8px;
+        }
+        .welcome p {
+            font-size: 14px;
+            margin-bottom: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div>
+            <h1>🤖 Spring AI Agent</h1>
+            <span class="subtitle">SKILL.md 驱动 · MCP 工具调用</span>
+        </div>
+        <div class="status">在线</div>
+    </div>
+
+    <div class="chat-container" id="chatContainer">
+        <div class="welcome">
+            <h2>你好！我是 AI 助手</h2>
+            <p>我可以帮你查天气、查订单、退款、查物流、分析数据</p>
+            <p>试试下面的快捷提问，或直接输入你的问题 👇</p>
+        </div>
+    </div>
+
+    <div class="quick-actions" id="quickActions">
+        <span class="quick-btn" onclick="sendQuick('上海今天天气怎么样？')">☀️ 上海天气</span>
+        <span class="quick-btn" onclick="sendQuick('帮我查一下张三的订单')">📦 查订单</span>
+        <span class="quick-btn" onclick="sendQuick('订单ORD20250201001帮我退款，质量问题')">💰 退款</span>
+        <span class="quick-btn" onclick="sendQuick('查一下ORD20250201002的物流')">🚚 查物流</span>
+        <span class="quick-btn" onclick="sendQuick('统计一下各类商品的销售额')">📊 数据分析</span>
+        <span class="quick-btn" onclick="sendQuick('你好，你是谁？')">💬 闲聊</span>
+    </div>
+
+    <div class="input-area">
+        <textarea id="messageInput" rows="1" placeholder="输入消息... (Enter 发送，Shift+Enter 换行)"
+                  onkeydown="handleKeyDown(event)" oninput="autoResize(this)"></textarea>
+        <button id="sendBtn" onclick="sendMessage()">发送</button>
+    </div>
+
+    <script>
+        let conversationId = null;
+        let isLoading = false;
+
+        function sendQuick(text) {
+            document.getElementById('messageInput').value = text;
+            sendMessage();
+        }
+
+        function handleKeyDown(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        }
+
+        function autoResize(el) {
+            el.style.height = 'auto';
+            el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById('messageInput');
+            const message = input.value.trim();
+            if (!message || isLoading) return;
+
+            const welcome = document.querySelector('.welcome');
+            if (welcome) welcome.remove();
+
+            appendMessage('user', message);
+            input.value = '';
+            input.style.height = 'auto';
+
+            isLoading = true;
+            document.getElementById('sendBtn').disabled = true;
+
+            const { bubbleEl, messageEl } = appendPlanActionMessage();
+
+            try {
+                const body = { message };
+                if (conversationId) body.conversationId = conversationId;
+
+                const res = await fetch('/api/agent/chat/stream', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'text/event-stream'
+                    },
+                    body: JSON.stringify(body)
+                });
+
+                if (!res.ok) {
+                    bubbleEl.innerHTML = '<span style="color:red">请求失败</span>';
+                    return;
+                }
+
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+
+                    // SSE 事件以 \n\n 分隔
+                    let boundary;
+                    while ((boundary = buffer.indexOf('\n\n')) !== -1) {
+                        const block = buffer.substring(0, boundary);
+                        buffer = buffer.substring(boundary + 2);
+
+                        // 拼接事件块内所有行（Spring 可能对长 JSON 自动换行）
+                        const lines = block.split('\n');
+                        let raw = '';
+                        for (const l of lines) {
+                            if (l.startsWith('data:')) {
+                                raw += l.slice(5);
+                            } else if (raw && l.trim()) {
+                                // 续行（长 JSON 被 Spring 换行截断）
+                                raw += l;
+                            }
+                        }
+                        raw = raw.trim();
+                        if (!raw) continue;
+
+                        try {
+                            const event = JSON.parse(raw);
+                            handleEvent(event, bubbleEl, messageEl);
+                        } catch(e) {
+                            // 忽略非 JSON
+                            console.warn('SSE parse error:', raw, e);
+                        }
+                    }
+                }
+            } catch (err) {
+                bubbleEl.innerHTML = `<span style="color:red">网络错误: ${escapeHtml(err.message)}</span>`;
+            } finally {
+                isLoading = false;
+                document.getElementById('sendBtn').disabled = false;
+                input.focus();
+            }
+        }
+
+        // 处理 PlanActionEvent
+        function handleEvent(event, bubbleEl, messageEl) {
+            const container = messageEl.closest('.chat-container') || document.getElementById('chatContainer');
+
+            switch (event.type) {
+                case 'planning':
+                    setPlanningStatus(bubbleEl, event.message);
+                    break;
+
+                case 'plan':
+                    setPlanSteps(bubbleEl, event.steps);
+                    break;
+
+                case 'action':
+                    updateStepStatus(bubbleEl, event.step, event.status, event.message, event.content);
+                    break;
+
+                case 'observe':
+                    showObservation(bubbleEl, event.step, event.message);
+                    break;
+
+                case 'replan':
+                    showReplan(bubbleEl, event.message, event.steps);
+                    break;
+
+                case 'result':
+                    showResult(bubbleEl, event.content);
+                    break;
+
+                case 'error':
+                    showError(bubbleEl, event.message);
+                    break;
+
+                case 'done':
+                    bubbleEl.querySelectorAll('.spinner').forEach(s => s.remove());
+                    const planStatus = bubbleEl.querySelector('.plan-status');
+                    if (planStatus) planStatus.remove();
+                    break;
+            }
+
+            messageEl.scrollIntoView({ block: 'end', behavior: 'smooth' });
+        }
+
+        function setPlanningStatus(bubbleEl, message) {
+            let statusEl = bubbleEl.querySelector('.plan-status');
+            if (!statusEl) {
+                // 只在初始状态（没有步骤列表时）才清空
+                if (!bubbleEl.querySelector('.plan-steps') && !bubbleEl.querySelector('.result-content')) {
+                    bubbleEl.innerHTML = '';
+                }
+                statusEl = document.createElement('div');
+                statusEl.className = 'plan-status';
+                bubbleEl.appendChild(statusEl);
+            }
+            statusEl.innerHTML = `<div class="spinner"></div> ${escapeHtml(message)}`;
+        }
+
+        function setPlanSteps(bubbleEl, steps) {
+            // 移除 planning status
+            const statusEl = bubbleEl.querySelector('.plan-status');
+            if (statusEl) statusEl.remove();
+
+            let stepsEl = bubbleEl.querySelector('.plan-steps');
+            if (!stepsEl) {
+                stepsEl = document.createElement('ul');
+                stepsEl.className = 'plan-steps';
+                bubbleEl.appendChild(stepsEl);
+            }
+            stepsEl.innerHTML = steps.map((s, i) =>
+                `<li class="pending" data-step="${i + 1}">
+                    <div class="step-header">
+                        <span class="step-icon">○</span>
+                        <span>${escapeHtml(s)}</span>
+                    </div>
+                    <div class="step-result result-content"></div>
+                </li>`
+            ).join('');
+        }
+
+        function updateStepStatus(bubbleEl, stepNum, status, message, resultContent) {
+            const stepsEl = bubbleEl.querySelector('.plan-steps');
+            if (!stepsEl) return;
+
+            const li = stepsEl.querySelector(`li[data-step="${stepNum}"]`);
+            if (!li) return;
+
+            if (status === 'running') {
+                li.className = 'running';
+                li.querySelector('.step-icon').innerHTML = '<div class="spinner" style="width:14px;height:14px;border-width:2px;"></div>';
+            } else if (status === 'done') {
+                li.className = 'done';
+                li.querySelector('.step-icon').textContent = '✓';
+                // 显示步骤执行结果
+                if (resultContent) {
+                    const resultEl = li.querySelector('.step-result');
+                    if (resultEl) {
+                        const text = resultContent.length > 300
+                            ? resultContent.substring(0, 300) + '...'
+                            : resultContent;
+                        resultEl.innerHTML = renderMarkdown(text);
+                        resultEl.classList.add('show');
+                    }
+                }
+            }
+        }
+
+        function showObservation(bubbleEl, stepNum, observation) {
+            const stepsEl = bubbleEl.querySelector('.plan-steps');
+            if (!stepsEl) return;
+
+            const li = stepsEl.querySelector(`li[data-step="${stepNum}"]`);
+            if (!li) return;
+
+            // 移除旧的 observe tag
+            const old = li.querySelector('.observe-tag');
+            if (old) old.remove();
+
+            const tag = document.createElement('div');
+            const isOk = observation && observation.toUpperCase().startsWith('OK');
+            tag.className = `observe-tag ${isOk ? 'ok' : 'replan'}`;
+            tag.textContent = observation.length > 80 ? observation.substring(0, 80) + '...' : observation;
+            li.appendChild(tag);
+        }
+
+        function showReplan(bubbleEl, reason, newSteps) {
+            // 添加 replan banner
+            const banner = document.createElement('div');
+            banner.className = 'replan-banner';
+            banner.innerHTML = `<strong>🔄 重新规划</strong>${escapeHtml(reason.length > 80 ? reason.substring(0, 80) + '...' : reason)}`;
+            bubbleEl.appendChild(banner);
+
+            // 替换步骤列表
+            const oldSteps = bubbleEl.querySelector('.plan-steps');
+            if (oldSteps) oldSteps.remove();
+
+            const stepsEl = document.createElement('ul');
+            stepsEl.className = 'plan-steps';
+            stepsEl.innerHTML = newSteps.map((s, i) =>
+                `<li class="pending" data-step="${i + 1}">
+                    <div class="step-header">
+                        <span class="step-icon">○</span>
+                        <span>${escapeHtml(s)}</span>
+                    </div>
+                    <div class="step-result result-content"></div>
+                </li>`
+            ).join('');
+            bubbleEl.appendChild(stepsEl);
+        }
+
+        function showResult(bubbleEl, content) {
+            // 添加分隔线和结果
+            const divider = document.createElement('div');
+            divider.className = 'plan-divider';
+            bubbleEl.appendChild(divider);
+
+            const resultEl = document.createElement('div');
+            resultEl.className = 'result-content';
+            resultEl.innerHTML = renderMarkdown(content);
+            bubbleEl.appendChild(resultEl);
+        }
+
+        function showError(bubbleEl, message) {
+            const errEl = document.createElement('div');
+            errEl.style.color = 'red';
+            errEl.style.marginTop = '8px';
+            errEl.textContent = message;
+            bubbleEl.appendChild(errEl);
+        }
+
+        function appendMessage(role, content) {
+            const container = document.getElementById('chatContainer');
+            const div = document.createElement('div');
+            div.className = `message ${role}`;
+            const avatar = role === 'user' ? '👤' : '🤖';
+            div.innerHTML = `
+                <div class="avatar">${avatar}</div>
+                <div class="bubble">${escapeHtml(content)}</div>
+            `;
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function appendPlanActionMessage() {
+            const container = document.getElementById('chatContainer');
+            const div = document.createElement('div');
+            div.className = 'message assistant';
+
+            const bubble = document.createElement('div');
+            bubble.className = 'bubble';
+            bubble.innerHTML = '<div class="plan-status"><div class="spinner"></div> 正在处理...</div>';
+
+            div.innerHTML = '<div class="avatar">🤖</div>';
+            div.appendChild(bubble);
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+
+            return { bubbleEl: bubble, messageEl: div };
+        }
+
+        function renderMarkdown(text) {
+            if (!text) return '';
+            try {
+                if (typeof marked !== 'undefined') {
+                    // marked v4.x: marked.parse() 或 marked(text)
+                    return marked.parse ? marked.parse(text) : marked(text);
+                }
+            } catch(e) { console.warn('marked error:', e); }
+            // fallback
+            return escapeHtml(text).replace(/\n/g, '<br>');
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,40 @@
+server:
+  port: 8080
+
+spring:
+  autoconfigure:
+    exclude:
+      - org.springframework.ai.mcp.client.autoconfigure.McpClientAutoConfiguration
+      - org.springframework.ai.mcp.client.autoconfigure.McpToolCallbackAutoConfiguration
+      - org.springframework.ai.mcp.client.autoconfigure.SseHttpClientTransportAutoConfiguration
+      - org.springframework.ai.mcp.client.autoconfigure.SseWebFluxTransportAutoConfiguration
+  ai:
+    openai:
+      api-key: ${OPENAI_API_KEY:xxx}
+      base-url: ${OPENAI_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
+      chat:
+        completions-path: /chat/completions
+        options:
+          model: ${OPENAI_MODEL:qwen-plus}
+          temperature: 0.7
+          max-tokens: 4096
+
+    # MCP Client 配置 —— 连接 MCP Server
+    mcp:
+      client:
+        enabled: true
+        name: agent-mcp-client
+        version: 1.0.0
+        request-timeout: 30s
+        type: SYNC
+        # 通过 SSE 连接 MCP Server
+        sse:
+          connections:
+            business-server:
+              url: http://localhost:8081
+
+logging:
+  level:
+    com.example.mcp.client: DEBUG
+    org.springframework.ai: INFO
+    io.modelcontextprotocol: DEBUG
