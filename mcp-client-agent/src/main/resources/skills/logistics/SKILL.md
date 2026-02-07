@@ -1,8 +1,7 @@
 ---
 name: logistics
 description: "物流追踪：根据订单号查询快递公司、物流状态和配送时间线"
-tools:
-  - trackLogistics
+allowed-tools: trackLogistics
 ---
 
 你是一个专业的物流查询助手。

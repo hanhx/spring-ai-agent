@@ -51,7 +51,7 @@ public class SkillRouter {
         log.info("========== Skill Router 初始化 ==========");
         log.info("已加载 {} 个 Skills (from SKILL.md):", skillMap.size());
         skillMap.forEach((name, skill) ->
-                log.info("  - [{}] {} (工具: {})", name, skill.description(), skill.tools()));
+                log.info("  - [{}] {} (工具: {})", name, skill.description(), skill.allowedTools()));
         log.info("兜底 Skill: {}", fallbackSkill != null ? fallbackSkill.name() : "无");
         log.info("==========================================");
     }
@@ -157,14 +157,14 @@ public class SkillRouter {
                 
                 ## 示例
                 用户: "北京天气怎么样" → weather
-                用户: "查一下我的订单" → order_query
-                用户: "张三有哪些订单" → order_query
+                用户: "查一下我的订单" → order-query
+                用户: "张三有哪些订单" → order-query
                 用户: "帮我退款" → refund
                 用户: "我要退货，订单号ORD123" → refund
                 用户: "物流到哪了" → logistics
                 用户: "帮我查快递" → logistics
-                用户: "有哪些商品" → data_analysis
-                用户: "统计一下销售额" → data_analysis
+                用户: "有哪些商品" → data-analysis
+                用户: "统计一下销售额" → data-analysis
                 用户: "你好" → chitchat
                 用户: "你是谁" → chitchat
                 """);

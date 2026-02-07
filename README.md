@@ -65,10 +65,10 @@ Skill 通过 **Plan-and-Execute** 模式执行：Plan → Execute Step → Obser
 | Skill | 工具 | 说明 |
 |-------|------|------|
 | `weather` | getWeather | 天气查询 + 穿衣建议 |
-| `order_query` | queryOrder | 订单查询 |
+| `order-query` | queryOrder | 订单查询 |
 | `refund` | queryOrder, applyRefund | 退款申请（含状态校验） |
 | `logistics` | trackLogistics | 物流追踪 |
-| `data_analysis` | queryDatabase | 自然语言转 SQL 查询 |
+| `data-analysis` | queryDatabase | 自然语言转 SQL 查询 |
 | `chitchat` | 无 | 闲聊兜底 |
 
 新增 Skill 只需在 `resources/skills/` 下创建目录和 `SKILL.md` 文件。
@@ -180,10 +180,10 @@ spring-ai-agent/
             ├── application.yml
             ├── skills/                         # Skill 定义（零代码扩展）
             │   ├── weather/SKILL.md
-            │   ├── order_query/SKILL.md
+            │   ├── order-query/SKILL.md
             │   ├── refund/SKILL.md
             │   ├── logistics/SKILL.md
-            │   ├── data_analysis/SKILL.md
+            │   ├── data-analysis/SKILL.md
             │   └── chitchat/SKILL.md
             └── static/index.html
 ```

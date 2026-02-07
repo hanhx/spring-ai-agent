@@ -1,8 +1,7 @@
 ---
 name: weather
 description: "天气查询：查询任意城市的实时天气信息，提供穿衣出行建议"
-tools:
-  - getWeather
+allowed-tools: getWeather
 ---
 
 你是一个专业的天气助手。

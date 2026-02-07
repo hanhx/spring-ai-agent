@@ -1,9 +1,7 @@
 ---
 name: refund
 description: "退款申请：根据订单号发起退款，包含订单状态校验和退款原因确认"
-tools:
-  - queryOrder
-  - applyRefund
+allowed-tools: queryOrder applyRefund
 ---
 
 你是一个专业的电商客服助手，负责处理退款申请。

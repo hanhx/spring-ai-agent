@@ -33,11 +33,13 @@ public class SkillExecutor {
 
     private final ChatClient.Builder chatClientBuilder;
     private final McpConnectionManager mcpTools;
+    private final SkillLoader skillLoader;
 
     @Autowired
-    public SkillExecutor(ChatClient.Builder chatClientBuilder, McpConnectionManager mcpTools) {
+    public SkillExecutor(ChatClient.Builder chatClientBuilder, McpConnectionManager mcpTools, SkillLoader skillLoader) {
         this.chatClientBuilder = chatClientBuilder;
         this.mcpTools = mcpTools;
+        this.skillLoader = skillLoader;
     }
 
     /**
@@ -83,7 +85,7 @@ public class SkillExecutor {
 
             // 筛选该 Skill 声明的工具（支持后缀匹配，兼容带前缀的工具名）
             List<ToolCallback> matched = new ArrayList<>();
-            for (String toolName : skill.tools()) {
+            for (String toolName : skill.allowedTools()) {
                 ToolCallback tool = findTool(allTools, toolName);
                 if (tool != null) {
                     matched.add(tool);
@@ -97,10 +99,13 @@ public class SkillExecutor {
                     skill.name(), skillTools.length,
                     Arrays.stream(skillTools).map(t -> t.getToolDefinition().name()).toList());
 
+            // 按需加载 SKILL.md body（Progressive Disclosure）
+            String prompt = skillLoader.loadPrompt(skill);
+
             // 构建 ChatClient，在 prompt 级别传入 system prompt 和工具（避免污染共享 Builder）
             String content = chatClientBuilder.build()
                     .prompt()
-                    .system(skill.prompt())
+                    .system(prompt)
                     .user(userMessage)
                     .toolCallbacks(skillTools)
                     .call()
@@ -265,7 +270,7 @@ public class SkillExecutor {
                 
                 请输出接下来要执行的步骤（每行一个）：
                 """.formatted(
-                skill.tools().isEmpty() ? "无" : String.join(", ", skill.tools()),
+                skill.allowedTools().isEmpty() ? "无" : String.join(", ", skill.allowedTools()),
                 userMessage,
                 completedInfo
         );
@@ -288,6 +293,7 @@ public class SkillExecutor {
                         .map(s -> "步骤「" + s.step() + "」结果: " + s.result())
                         .collect(Collectors.joining("\n"));
 
+        String skillPrompt = skillLoader.loadPrompt(skill);
         String stepPrompt = """
                 %s
                 
@@ -298,7 +304,7 @@ public class SkillExecutor {
                 
                 请执行这个步骤。如果需要调用工具，请调用。只返回这一步的执行结果，不要返回最终回复。
                 """.formatted(
-                skill.prompt(),
+                skillPrompt,
                 stepDesc,
                 userMessage,
                 historyInfo.isEmpty() ? "" : "之前步骤的结果:\n" + historyInfo
@@ -372,6 +378,7 @@ public class SkillExecutor {
                 .map(s -> "步骤「" + s.step() + "」结果:\n" + s.result())
                 .collect(Collectors.joining("\n\n"));
 
+        String skillPrompt = skillLoader.loadPrompt(skill);
         String prompt = """
                 %s
                 
@@ -381,9 +388,9 @@ public class SkillExecutor {
                 %s
                 
                 请根据以上所有步骤的结果，生成对用户问题的最终完整回复。
-                """.formatted(skill.prompt(), userMessage, stepsInfo);
+                """.formatted(skillPrompt, userMessage, stepsInfo);
 
-        return chatClientBuilder.build().prompt().system(skill.prompt()).user(prompt).call().content();
+        return chatClientBuilder.build().prompt().system(skillPrompt).user(prompt).call().content();
     }
 
     /**
@@ -392,7 +399,7 @@ public class SkillExecutor {
     private ToolCallback[] resolveTools(SkillDefinition skill) {
         Map<String, ToolCallback> allTools = getAllTools();
         List<ToolCallback> matched = new ArrayList<>();
-        for (String toolName : skill.tools()) {
+        for (String toolName : skill.allowedTools()) {
             ToolCallback tool = findTool(allTools, toolName);
             if (tool != null) {
                 matched.add(tool);
