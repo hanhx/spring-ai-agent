@@ -44,6 +44,17 @@
             <artifactId>spring-ai-starter-mcp-client</artifactId>
         </dependency>
 
+        <!-- JDBC + H2 (Chat Memory Persistence) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-jdbc</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
         <!-- Netty macOS DNS 原生库（消除启动警告） -->
         <dependency>
             <groupId>io.netty</groupId>

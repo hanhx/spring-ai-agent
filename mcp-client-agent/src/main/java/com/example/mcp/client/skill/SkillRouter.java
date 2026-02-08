@@ -5,6 +5,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.memory.ChatMemory;
+import org.springframework.ai.chat.messages.Message;
 import org.springframework.stereotype.Component;
 
 import reactor.core.publisher.Flux;
@@ -30,10 +32,13 @@ public class SkillRouter {
     private final Map<String, SkillDefinition> skillMap;
     private final SkillDefinition fallbackSkill;
     private final SkillExecutor executor;
+    private final ChatMemory chatMemory;
 
     @Autowired
-    public SkillRouter(ChatClient.Builder chatClientBuilder, SkillLoader loader, SkillExecutor executor) {
+    public SkillRouter(ChatClient.Builder chatClientBuilder, SkillLoader loader, SkillExecutor executor,
+                       ChatMemory chatMemory) {
         this.executor = executor;
+        this.chatMemory = chatMemory;
 
         List<SkillDefinition> skills = loader.getSkills();
         this.skillMap = skills.stream()
@@ -62,8 +67,8 @@ public class SkillRouter {
     public SkillResponse route(String conversationId, String userMessage) {
         log.info("[SkillRouter] 收到请求: {}", userMessage);
 
-        // Step 1: LLM 意图识别
-        String skillName = identifySkill(userMessage);
+        // Step 1: LLM 意图识别（带对话历史，支持上下文延续）
+        String skillName = identifySkill(conversationId, userMessage);
         log.info("[SkillRouter] 意图识别结果: → Skill [{}]", skillName);
 
         // Step 2: 查找 Skill 定义
@@ -72,9 +77,9 @@ public class SkillRouter {
             return new SkillResponse("router", "抱歉，系统暂时无法处理您的请求。");
         }
 
-        // Step 3: 执行 Skill
+        // Step 3: 执行 Skill（传递 conversationId 用于 memory）
         log.info("[SkillRouter] 分发到 Skill: [{}] {}", skill.name(), skill.description());
-        return executor.execute(skill, userMessage);
+        return executor.execute(skill, conversationId, userMessage);
     }
 
     /**
@@ -84,12 +89,12 @@ public class SkillRouter {
         log.info("[SkillRouter] 流式请求: {}", userMessage);
 
         return Flux.concat(
-                // 1. 立即推送"正在理解"
+                // 1. 立即推送“正在理解”
                 Flux.just(PlanActionEvent.planning("🤔 正在理解您的问题...")),
 
-                // 2. 意图识别（阻塞）→ 推送"已理解" → 执行 planAndExecute
+                // 2. 意图识别（带对话历史）→ 推送“已理解” → 执行 planAndExecute
                 Flux.defer(() -> {
-                    String skillName = identifySkill(userMessage);
+                    String skillName = identifySkill(conversationId, userMessage);
                     log.info("[SkillRouter] 意图识别结果: → Skill [{}]", skillName);
 
                     SkillDefinition skill = skillMap.getOrDefault(skillName, fallbackSkill);
@@ -102,16 +107,36 @@ public class SkillRouter {
 
                     return Flux.concat(
                             Flux.just(PlanActionEvent.planning("💡 已理解，正在规划执行方案...")),
-                            executor.planAndExecute(skill, userMessage)
+                            executor.planAndExecute(skill, conversationId, userMessage)
                     );
                 }).subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
         );
     }
 
-    private String identifySkill(String userMessage) {
+    private String identifySkill(String conversationId, String userMessage) {
         try {
+            // 获取对话历史，让 Router 能识别上下文延续的意图（如“上海”延续上一轮的天气查询）
+            List<Message> history = chatMemory.get(conversationId);
+            String historyContext = "";
+            if (history != null && !history.isEmpty()) {
+                StringBuilder sb = new StringBuilder("\n\n## 对话历史（从早到晚）\n");
+                int start = Math.max(0, history.size() - 16);
+                for (int i = start; i < history.size(); i++) {
+                    Message msg = history.get(i);
+                    String role = msg.getMessageType().name().toLowerCase();
+                    String text = msg.getText();
+                    // 截断过长的助手回复，只保留摘要
+                    if ("assistant".equals(role) && text != null && text.length() > 150) {
+                        text = text.substring(0, 150) + "...";
+                    }
+                    sb.append(role).append(": ").append(text).append("\n");
+                }
+                sb.append("\n请结合对话历史判断用户当前消息的意图。如果用户在补充上一轮的信息，应该路由到同一个 Skill。");
+                historyContext = sb.toString();
+            }
+
             String result = routerClient.prompt()
-                    .user(userMessage)
+                    .user(userMessage + historyContext)
                     .call()
                     .content()
                     .trim()

@@ -380,7 +380,7 @@
     </div>
 
     <script>
-        let conversationId = null;
+        let conversationId = crypto.randomUUID();
         let isLoading = false;
 
         function sendQuick(text) {
@@ -418,8 +418,7 @@
             const { bubbleEl, messageEl } = appendPlanActionMessage();
 
             try {
-                const body = { message };
-                if (conversationId) body.conversationId = conversationId;
+                const body = { conversationId, message };
 
                 const res = await fetch('/api/agent/chat/stream', {
                     method: 'POST',
