@@ -39,7 +39,7 @@ spring:
 
 # 自管理的 MCP Server 连接列表（McpConnectionManager 读取）
 mcp:
-  servers: "{'business-server': 'http://localhost:8081', 'weather-server': 'http://localhost:8082'}"
+  servers: "{'business-server': 'http://localhost:9081', 'weather-server': 'http://localhost:9082'}"
 
 logging:
   level:
