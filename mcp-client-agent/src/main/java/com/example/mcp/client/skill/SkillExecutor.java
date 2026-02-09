@@ -8,7 +8,6 @@ import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
-import com.example.mcp.client.config.McpConnectionManager;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
@@ -18,104 +17,59 @@ import reactor.core.scheduler.Schedulers;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Map;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
- * 通用 Skill 执行器 —— 根据 SkillDefinition（从 SKILL.md 加载）执行 Skill
+ * Skill 执行器（Facade） —— 编排 Plan-and-Execute 流程
  *
- * 执行逻辑：
- * 1. 将 SKILL.md 正文作为 System Prompt
- * 2. 只绑定该 Skill 声明的 MCP 工具（frontmatter 中的 tools 字段）
- * 3. 让 LLM 按照 SKILL.md 中的 SOP 指令自动执行
+ * 职责拆分：
+ *   - ToolResolver: 工具解析与匹配
+ *   - ExecutionContext: 执行状态管理
+ *   - SkillExecutor: 流程编排（本类）
+ *
+ * 内部角色（LLM 调用）：
+ *   - Planner: 生成/重新生成执行计划
+ *   - StepExecutor: 执行单个步骤（带工具调用）
+ *   - Observer: 观察步骤结果，判断是否需要 RePlan
+ *   - Summarizer: 基于所有步骤结果生成最终回复
  */
 @Component
 public class SkillExecutor {
 
     private static final Logger log = LoggerFactory.getLogger(SkillExecutor.class);
 
+    private static final int MAX_REPLAN_ROUNDS = 3;
+    private static final int MAX_ASK_USER_ROUNDS = 4;
+    private static final String ASK_USER_PREFIX = "追问用户";
+
     private final ChatClient.Builder chatClientBuilder;
-    private final McpConnectionManager mcpTools;
+    private final ToolResolver toolResolver;
     private final SkillLoader skillLoader;
     private final ChatMemory chatMemory;
 
     @Autowired
-    public SkillExecutor(ChatClient.Builder chatClientBuilder, McpConnectionManager mcpTools,
+    public SkillExecutor(ChatClient.Builder chatClientBuilder, ToolResolver toolResolver,
                          SkillLoader skillLoader, ChatMemory chatMemory) {
         this.chatClientBuilder = chatClientBuilder;
-        this.mcpTools = mcpTools;
+        this.toolResolver = toolResolver;
         this.skillLoader = skillLoader;
         this.chatMemory = chatMemory;
     }
 
-    /**
-     * 实时获取所有 MCP 工具（延迟加载，避免启动时 MCP 连接未就绪）
-     */
-    private Map<String, ToolCallback> getAllTools() {
-        return Arrays.stream(mcpTools.getToolCallbacks())
-                .collect(Collectors.toMap(
-                        cb -> cb.getToolDefinition().name(),
-                        Function.identity()
-                ));
-    }
+    // ==================== 公开 API ====================
 
     /**
-     * 根据 SKILL.md 中声明的工具名（如 getWeather），从实际注册的 MCP 工具中匹配。
-     * 支持精确匹配和后缀匹配（兼容 Spring AI 自动添加的前缀，如 agent_mcp_client_business_server_getWeather）。
-     */
-    private ToolCallback findTool(Map<String, ToolCallback> allTools, String shortName) {
-        // 精确匹配
-        if (allTools.containsKey(shortName)) {
-            return allTools.get(shortName);
-        }
-        // 后缀匹配（兼容带前缀的工具名）
-        String suffix = "_" + shortName;
-        for (Map.Entry<String, ToolCallback> entry : allTools.entrySet()) {
-            if (entry.getKey().endsWith(suffix)) {
-                return entry.getValue();
-            }
-        }
-        return null;
-    }
-
-    /**
-     * 执行指定的 Skill
+     * 简单执行模式 —— 直接调用 LLM + 工具，不走 Plan-and-Execute
      */
     public SkillResponse execute(SkillDefinition skill, String conversationId, String userMessage) {
         log.info("[SkillExecutor] 执行 Skill [{}]，用户消息: {}", skill.name(), userMessage);
-
-        // 将用户消息写入 memory
         chatMemory.add(conversationId, new UserMessage(userMessage));
 
         try {
-            // 实时获取工具（避免启动时 MCP 未就绪）
-            Map<String, ToolCallback> allTools = getAllTools();
-            log.info("[SkillExecutor] 当前可用 MCP 工具: {}", allTools.keySet());
-
-            // 筛选该 Skill 声明的工具（支持后缀匹配，兼容带前缀的工具名）
-            List<ToolCallback> matched = new ArrayList<>();
-            for (String toolName : skill.allowedTools()) {
-                ToolCallback tool = findTool(allTools, toolName);
-                if (tool != null) {
-                    matched.add(tool);
-                } else {
-                    log.warn("[SkillExecutor] Skill [{}] 声明的工具 '{}' 未找到", skill.name(), toolName);
-                }
-            }
-            ToolCallback[] skillTools = matched.toArray(new ToolCallback[0]);
-
-            log.info("[SkillExecutor] Skill [{}] 绑定 {} 个工具: {}",
-                    skill.name(), skillTools.length,
-                    Arrays.stream(skillTools).map(t -> t.getToolDefinition().name()).toList());
-
-            // 按需加载 SKILL.md body（Progressive Disclosure）
+            ToolCallback[] skillTools = toolResolver.resolveTools(skill);
             String prompt = skillLoader.loadPrompt(skill);
-
-            // 获取对话历史，拼接到 user 消息中（让 LLM 看到上下文）
             String enrichedUserMessage = enrichWithHistory(conversationId, userMessage);
 
-            // 构建 ChatClient，在 prompt 级别传入 system prompt 和工具（避免污染共享 Builder）
             String content = chatClientBuilder.build()
                     .prompt()
                     .system(prompt)
@@ -124,9 +78,7 @@ public class SkillExecutor {
                     .call()
                     .content();
 
-            // 将助手回复写入 memory
             chatMemory.add(conversationId, new AssistantMessage(content));
-
             log.info("[SkillExecutor] Skill [{}] 执行完成，响应长度: {}", skill.name(), content.length());
             return new SkillResponse(skill.name(), content);
         } catch (Exception e) {
@@ -138,83 +90,19 @@ public class SkillExecutor {
     }
 
     /**
-     * Plan-and-Execute 模式（参考 LangGraph Plan-and-Execute）
-     *
-     * 循环：Plan → Execute Step → Observe → (RePlan?) → Execute Next → ... → Final Answer
-     *
-     * 每个步骤真正调用工具，Observer 判断结果是否符合预期，
-     * 如果不符合则 RePlan 调整剩余步骤，最多 RePlan MAX_REPLAN_ROUNDS 次。
+     * Plan-and-Execute 流式模式 —— Plan → Execute → Observe → (RePlan?) → Final Answer
      */
-    private static final int MAX_REPLAN_ROUNDS = 3;
-
     public Flux<PlanActionEvent> planAndExecute(SkillDefinition skill, String conversationId, String userMessage) {
         log.info("[SkillExecutor] Plan&Execute Skill [{}]，用户消息: {}", skill.name(), userMessage);
-
-        // 将用户消息写入 memory（仅外层，内部步骤不写）
         chatMemory.add(conversationId, new UserMessage(userMessage));
 
-        // 共享可变状态（在 boundedElastic 线程中顺序访问，线程安全）
-        final List<StepResult> completedSteps = new ArrayList<>();
-        final int[] replanCount = {0};
-        final int[] stepIndex = {0};
-        // steps 用数组包装以便在 lambda 中修改引用
-        final List<List<String>> stepsHolder = new ArrayList<>();
-        // 缓存 prompt 和 tools，避免每步重复加载（MCP tools/list + SKILL.md IO）
-        final String[] cachedPrompt = {null};
-        final ToolCallback[][] cachedTools = {null};
-        // 标记是否因"追问用户"提前终止（跳过 finalPhase）
-        final boolean[] askUserTerminated = {false};
-        // 用对话历史丰富用户消息（让 Planner 和 Executor 看到上下文）
-        final String enrichedMessage = enrichWithHistory(conversationId, userMessage);
+        String enrichedMessage = enrichWithHistory(conversationId, userMessage);
+        ExecutionContext ctx = new ExecutionContext(skill, conversationId, userMessage, enrichedMessage);
 
-        // Phase 0: 预加载 prompt 和 tools（只加载一次）
-        Mono<Void> preload = Mono.fromRunnable(() -> {
-            cachedPrompt[0] = skillLoader.loadPrompt(skill);
-            cachedTools[0] = resolveTools(skill);
-            log.info("[SkillExecutor] 预加载 Skill [{}] prompt({}字) + {} 个工具",
-                    skill.name(), cachedPrompt[0].length(), cachedTools[0].length);
-        }).subscribeOn(Schedulers.boundedElastic()).then();
-
-        // Phase 1: 生成计划
-        Flux<PlanActionEvent> planPhase = Flux.concat(
-                emit(PlanActionEvent.planning("正在分析问题并生成执行计划...")),
-                Mono.fromCallable(() -> {
-                    List<String> steps = generatePlan(skill, enrichedMessage, List.of(), cachedTools[0]);
-                    log.info("[Plan] 初始计划: {}", steps);
-                    stepsHolder.add(steps);
-                    return PlanActionEvent.plan(steps);
-                }).subscribeOn(Schedulers.boundedElastic())
-        );
-
-        // Phase 2: Execute & Observe 循环（复用缓存的 tools）
-        Flux<PlanActionEvent> executePhase = Flux.defer(() -> {
-            List<String> steps = stepsHolder.get(stepsHolder.size() - 1);
-            stepIndex[0] = 0;
-            completedSteps.clear();
-            return executeLoop(skill, enrichedMessage, steps, completedSteps, stepIndex, replanCount, stepsHolder,
-                    cachedPrompt[0], cachedTools[0], conversationId, askUserTerminated);
-        }).subscribeOn(Schedulers.boundedElastic());
-
-        // Phase 3: 最终回复（如果已因"追问用户"提前终止，则跳过）
-        Flux<PlanActionEvent> finalPhase = Flux.defer(() -> {
-            if (askUserTerminated[0]) {
-                log.info("[SkillExecutor] Plan&Execute Skill [{}] 因追问用户提前终止，跳过 finalPhase", skill.name());
-                return Flux.just(PlanActionEvent.done());
-            }
-            return Flux.concat(
-                    emit(PlanActionEvent.planning("正在生成最终回复...")),
-                    Mono.fromCallable(() -> {
-                        String finalAnswer = generateFinalAnswer(skill, enrichedMessage, cachedTools[0], completedSteps,
-                                cachedPrompt[0]);
-                        // 将最终回复写入 memory（仅外层，内部步骤不写）
-                        chatMemory.add(conversationId, new AssistantMessage(finalAnswer));
-                        log.info("[SkillExecutor] Plan&Execute Skill [{}] 完成，共 {} 步，RePlan {} 次",
-                                skill.name(), completedSteps.size(), replanCount[0]);
-                        return PlanActionEvent.result(finalAnswer);
-                    }).subscribeOn(Schedulers.boundedElastic()),
-                    emit(PlanActionEvent.done())
-            );
-        });
+        Mono<Void> preload = preloadPhase(ctx);
+        Flux<PlanActionEvent> planPhase = planPhase(ctx);
+        Flux<PlanActionEvent> executePhase = executePhase(ctx);
+        Flux<PlanActionEvent> finalPhase = finalPhase(ctx);
 
         return Flux.concat(preload.thenMany(planPhase), executePhase, finalPhase)
                 .onErrorResume(e -> {
@@ -223,122 +111,135 @@ public class SkillExecutor {
                 });
     }
 
-    /** 包装单个事件为 Mono（不阻塞） */
-    private Mono<PlanActionEvent> emit(PlanActionEvent event) {
-        return Mono.just(event);
+    // ==================== Phase 编排 ====================
+
+    /** Phase 0: 预加载 prompt 和 tools（只加载一次） */
+    private Mono<Void> preloadPhase(ExecutionContext ctx) {
+        return Mono.fromRunnable(() -> {
+            ctx.setCachedPrompt(skillLoader.loadPrompt(ctx.skill()));
+            ctx.setCachedTools(toolResolver.resolveTools(ctx.skill()));
+            log.info("[SkillExecutor] 预加载 Skill [{}] prompt({}字) + {} 个工具",
+                    ctx.skill().name(), ctx.cachedPrompt().length(), ctx.cachedTools().length);
+        }).subscribeOn(Schedulers.boundedElastic()).then();
     }
 
-    /**
-     * Execute & Observe 循环 —— 逐步执行，每步产生多个事件
-     */
-    private static final String ASK_USER_PREFIX = "追问用户";
+    /** Phase 1: 生成初始计划 */
+    private Flux<PlanActionEvent> planPhase(ExecutionContext ctx) {
+        return Flux.concat(
+                Mono.just(PlanActionEvent.planning("正在分析问题并生成执行计划...")),
+                Mono.fromCallable(() -> {
+                    List<String> steps = invokePlanner(ctx, List.of());
+                    log.info("[Plan] 初始计划: {}", steps);
+                    ctx.addPlan(steps);
+                    return PlanActionEvent.plan(steps);
+                }).subscribeOn(Schedulers.boundedElastic())
+        );
+    }
 
-    private Flux<PlanActionEvent> executeLoop(SkillDefinition skill, String userMessage,
-                                               List<String> steps,
-                                               List<StepResult> completedSteps, int[] stepIndex,
-                                               int[] replanCount, List<List<String>> stepsHolder,
-                                               String cachedPrompt, ToolCallback[] cachedTools,
-                                               String conversationId, boolean[] askUserTerminated) {
-        if (stepIndex[0] >= steps.size()) {
+    /** Phase 2: Execute & Observe 循环 */
+    private Flux<PlanActionEvent> executePhase(ExecutionContext ctx) {
+        return Flux.defer(() -> executeLoop(ctx)).subscribeOn(Schedulers.boundedElastic());
+    }
+
+    /** Phase 3: 最终回复 */
+    private Flux<PlanActionEvent> finalPhase(ExecutionContext ctx) {
+        return Flux.defer(() -> {
+            if (ctx.isAskUserTerminated()) {
+                log.info("[SkillExecutor] Plan&Execute Skill [{}] 因追问用户提前终止，跳过 finalPhase", ctx.skill().name());
+                return Flux.just(PlanActionEvent.done());
+            }
+            return Flux.concat(
+                    Mono.just(PlanActionEvent.planning("正在生成最终回复...")),
+                    Mono.fromCallable(() -> {
+                        String finalAnswer = invokeSummarizer(ctx);
+                        chatMemory.add(ctx.conversationId(), new AssistantMessage(finalAnswer));
+                        log.info("[SkillExecutor] Plan&Execute Skill [{}] 完成，共 {} 步，RePlan {} 次",
+                                ctx.skill().name(), ctx.completedSteps().size(), ctx.replanCount());
+                        return PlanActionEvent.result(finalAnswer);
+                    }).subscribeOn(Schedulers.boundedElastic()),
+                    Mono.just(PlanActionEvent.done())
+            );
+        });
+    }
+
+    // ==================== Execute Loop ====================
+
+    private Flux<PlanActionEvent> executeLoop(ExecutionContext ctx) {
+        if (!ctx.hasMoreSteps()) {
             return Flux.empty();
         }
 
-        String currentStep = steps.get(stepIndex[0]);
-        int displayStep = stepIndex[0] + 1;
-        int totalSteps = steps.size();
+        String currentStep = ctx.currentStep();
+        int displayStep = ctx.currentStepDisplay();
+        int totalSteps = ctx.totalSteps();
 
-        // 检测"追问用户"步骤 → 直接终止执行流，把问题返回给用户
+        // 追问检测 + 上限防御
         if (isAskUserStep(currentStep)) {
-            String question = extractAskUserQuestion(currentStep);
-            log.info("[SkillExecutor] 检测到追问步骤，终止执行流，返回问题: {}", question);
-            askUserTerminated[0] = true;
-            // 写入 memory，让下一轮对话有上下文
-            chatMemory.add(conversationId, new AssistantMessage(question));
-            return Flux.just(
-                    PlanActionEvent.result(question),
-                    PlanActionEvent.done()
-            );
+            return handleAskUser(ctx, currentStep);
         }
 
-        // 每步产生: actionStart → (阻塞执行) → actionDone → (阻塞观察) → observe → (可能 replan) → 递归下一步
         return Flux.concat(
                 // actionStart
-                emit(PlanActionEvent.actionStart(displayStep, totalSteps, currentStep)),
+                Mono.just(PlanActionEvent.actionStart(displayStep, totalSteps, currentStep)),
 
-                // 执行步骤（阻塞，复用缓存的 tools 和 prompt）
+                // 执行步骤
                 Mono.fromCallable(() -> {
-                    String result = executeStep(skill, userMessage, currentStep, cachedTools, completedSteps,
-                            cachedPrompt);
+                    String result = invokeStepExecutor(ctx, currentStep);
                     log.info("[Action] Step {}: {} → {}", displayStep, currentStep,
                             result.length() > 100 ? result.substring(0, 100) + "..." : result);
-                    completedSteps.add(new StepResult(currentStep, result));
+                    ctx.addCompletedStep(currentStep, result);
                     return PlanActionEvent.actionDone(displayStep, totalSteps, currentStep, result);
                 }).subscribeOn(Schedulers.boundedElastic()),
 
-                // 观察（阻塞）+ 可能 replan + 递归下一步
+                // 观察 + 可能 replan + 递归
                 Flux.defer(() -> {
-                    StepResult lastResult = completedSteps.get(completedSteps.size() - 1);
-                    String observation = observe(userMessage, currentStep, lastResult.result(), steps, stepIndex[0], completedSteps);
+                    var lastResult = ctx.completedSteps().get(ctx.completedSteps().size() - 1);
+                    String observation = invokeObserver(ctx, currentStep, lastResult.result());
                     log.info("[Observe] Step {}: {}", displayStep, observation);
 
                     List<PlanActionEvent> events = new ArrayList<>();
                     events.add(PlanActionEvent.observe(displayStep, observation));
 
-                    if (needsReplan(observation) && replanCount[0] < MAX_REPLAN_ROUNDS) {
-                        replanCount[0]++;
-                        log.info("[RePlan] 第 {} 次重新规划", replanCount[0]);
-                        List<String> newSteps = replan(skill, userMessage, completedSteps, observation, cachedTools);
+                    if (needsReplan(observation) && ctx.replanCount() < MAX_REPLAN_ROUNDS) {
+                        ctx.incrementReplan();
+                        log.info("[RePlan] 第 {} 次重新规划", ctx.replanCount());
+                        List<String> newSteps = invokePlanner(ctx, ctx.completedSteps());
                         log.info("[RePlan] 新计划: {}", newSteps);
                         events.add(PlanActionEvent.replan(observation, newSteps));
-                        stepsHolder.add(newSteps);
-                        stepIndex[0] = 0;
-                        completedSteps.clear();
-                        // 递归执行新计划
-                        return Flux.concat(Flux.fromIterable(events),
-                                executeLoop(skill, userMessage, newSteps, completedSteps, stepIndex, replanCount, stepsHolder,
-                                        cachedPrompt, cachedTools, conversationId, askUserTerminated));
+                        ctx.resetForReplan(newSteps);
+                        return Flux.concat(Flux.fromIterable(events), executeLoop(ctx));
                     } else {
-                        stepIndex[0]++;
-                        // 递归执行下一步
-                        return Flux.concat(Flux.fromIterable(events),
-                                executeLoop(skill, userMessage, steps, completedSteps, stepIndex, replanCount, stepsHolder,
-                                        cachedPrompt, cachedTools, conversationId, askUserTerminated));
+                        ctx.advanceStep();
+                        return Flux.concat(Flux.fromIterable(events), executeLoop(ctx));
                     }
                 }).subscribeOn(Schedulers.boundedElastic())
         );
     }
 
-    /** 判断步骤是否为"追问用户" */
-    private boolean isAskUserStep(String step) {
-        return step.startsWith(ASK_USER_PREFIX) || step.startsWith("等待用户");
-    }
-
-    /** 从"追问用户：xxx"中提取问题文本 */
-    private String extractAskUserQuestion(String step) {
-        // 支持 "追问用户：xxx" / "追问用户: xxx" / "追问用户，xxx" 等格式
-        for (String sep : new String[]{"：", ":", "，", ","}) {
-            int idx = step.indexOf(sep);
-            if (idx > 0 && idx < step.length() - 1) {
-                String question = step.substring(idx + sep.length()).trim();
-                if (!question.isEmpty()) return question;
-            }
+    /** 处理追问步骤（含上限防御） */
+    private Flux<PlanActionEvent> handleAskUser(ExecutionContext ctx, String currentStep) {
+        int count = ctx.incrementAskUser();
+        if (count > MAX_ASK_USER_ROUNDS) {
+            log.warn("[SkillExecutor] 追问次数已达上限({})，不再追问，用已有信息兜底回复", MAX_ASK_USER_ROUNDS);
+            String fallback = "抱歉，我无法获取足够的信息来完成您的请求。请您提供更完整的信息后再试。";
+            ctx.terminateWithAskUser();
+            chatMemory.add(ctx.conversationId(), new AssistantMessage(fallback));
+            return Flux.just(PlanActionEvent.result(fallback), PlanActionEvent.done());
         }
-        // fallback: Planner 没写具体问题，生成默认追问
-        return "请问您能提供更多信息吗？例如城市名称、订单号等。";
+        String question = extractAskUserQuestion(currentStep);
+        log.info("[SkillExecutor] 检测到追问步骤(第{}次)，终止执行流，返回问题: {}", count, question);
+        ctx.terminateWithAskUser();
+        chatMemory.add(ctx.conversationId(), new AssistantMessage(question));
+        return Flux.just(PlanActionEvent.result(question), PlanActionEvent.done());
     }
 
-    /** 步骤执行结果 */
-    private record StepResult(String step, String result) {}
+    // ==================== LLM 角色调用 ====================
 
-    /**
-     * Planner —— 生成执行计划
-     */
-    private List<String> generatePlan(SkillDefinition skill, String userMessage,
-                                      List<StepResult> completed, ToolCallback[] tools) {
+    /** Planner —— 生成执行计划 */
+    private List<String> invokePlanner(ExecutionContext ctx, List<ExecutionContext.StepResult> completed) {
         String completedInfo = completed.isEmpty() ? "无" :
                 completed.stream().map(s -> "- " + s.step() + " → " + s.result()).collect(Collectors.joining("\n"));
-
-        String toolsInfo = formatToolSignatures(tools);
+        String toolsInfo = toolResolver.formatToolSignatures(ctx.cachedTools());
 
         String prompt = """
                 你是一个任务规划器。根据用户问题、可用工具和已完成步骤，生成接下来的执行计划。
@@ -360,11 +261,7 @@ public class SkillExecutor {
                 %s
                 
                 请输出接下来要执行的步骤（每行一个）：
-                """.formatted(
-                toolsInfo,
-                userMessage,
-                completedInfo
-        );
+                """.formatted(toolsInfo, ctx.enrichedMessage(), completedInfo);
 
         String result = chatClientBuilder.build().prompt().user(prompt).call().content();
         return Arrays.stream(result.split("\n"))
@@ -374,14 +271,10 @@ public class SkillExecutor {
                 .toList();
     }
 
-    /**
-     * Executor —— 执行单个步骤（带工具调用）
-     */
-    private String executeStep(SkillDefinition skill, String userMessage, String stepDesc,
-                               ToolCallback[] skillTools, List<StepResult> completedSteps,
-                               String skillPrompt) {
-        String historyInfo = completedSteps.isEmpty() ? "" :
-                completedSteps.stream()
+    /** StepExecutor —— 执行单个步骤（带工具调用） */
+    private String invokeStepExecutor(ExecutionContext ctx, String stepDesc) {
+        String historyInfo = ctx.completedSteps().isEmpty() ? "" :
+                ctx.completedSteps().stream()
                         .map(s -> "步骤「" + s.step() + "」结果: " + s.result())
                         .collect(Collectors.joining("\n"));
         String stepPrompt = """
@@ -394,9 +287,7 @@ public class SkillExecutor {
                 
                 请执行这个步骤。如果需要调用工具，请调用。只返回这一步的执行结果，不要返回最终回复。
                 """.formatted(
-                skillPrompt,
-                stepDesc,
-                userMessage,
+                ctx.cachedPrompt(), stepDesc, ctx.enrichedMessage(),
                 historyInfo.isEmpty() ? "" : "之前步骤的结果:\n" + historyInfo
         );
 
@@ -404,21 +295,20 @@ public class SkillExecutor {
             String result = chatClientBuilder.build()
                     .prompt()
                     .user(stepPrompt)
-                    .toolCallbacks(skillTools)
+                    .toolCallbacks(ctx.cachedTools())
                     .call()
                     .content();
             return result != null ? result : "(无结果)";
         } catch (Exception e) {
-            log.warn("[Executor] 步骤执行失败: {} - {}", stepDesc, e.getMessage());
+            log.warn("[StepExecutor] 步骤执行失败: {} - {}", stepDesc, e.getMessage());
             return "执行失败: " + e.getMessage();
         }
     }
 
-    /**
-     * Observer —— 观察步骤结果，判断是否需要 RePlan
-     */
-    private String observe(String userMessage, String stepDesc, String stepResult,
-                           List<String> remainingSteps, int currentIndex, List<StepResult> completed) {
+    /** Observer —— 观察步骤结果，判断是否需要 RePlan */
+    private String invokeObserver(ExecutionContext ctx, String stepDesc, String stepResult) {
+        List<String> plan = ctx.currentPlan();
+        int idx = ctx.stepIndex();
         String prompt = """
                 你是一个任务观察者。请评估当前步骤的执行结果。
                 
@@ -431,12 +321,9 @@ public class SkillExecutor {
                 - 如果结果正常且剩余步骤合理，回复 "OK: [简要说明]"
                 - 如果结果异常或需要调整计划，回复 "REPLAN: [原因和建议]"
                 """.formatted(
-                userMessage,
-                stepDesc,
+                ctx.enrichedMessage(), stepDesc,
                 stepResult.length() > 500 ? stepResult.substring(0, 500) + "..." : stepResult,
-                currentIndex + 1 < remainingSteps.size()
-                        ? String.join(", ", remainingSteps.subList(currentIndex + 1, remainingSteps.size()))
-                        : "无"
+                idx + 1 < plan.size() ? String.join(", ", plan.subList(idx + 1, plan.size())) : "无"
         );
 
         try {
@@ -446,27 +333,9 @@ public class SkillExecutor {
         }
     }
 
-    /** 判断观察结果是否需要 RePlan */
-    private boolean needsReplan(String observation) {
-        return observation != null && observation.toUpperCase().startsWith("REPLAN");
-    }
-
-    /**
-     * RePlan —— 根据已完成步骤和观察结果，重新生成计划
-     */
-    private List<String> replan(SkillDefinition skill, String userMessage,
-                                List<StepResult> completed, String observation,
-                                ToolCallback[] tools) {
-        return generatePlan(skill, userMessage, completed, tools);
-    }
-
-    /**
-     * Final Answer —— 基于所有步骤结果生成最终回复
-     */
-    private String generateFinalAnswer(SkillDefinition skill, String userMessage,
-                                       ToolCallback[] skillTools, List<StepResult> completedSteps,
-                                       String skillPrompt) {
-        String stepsInfo = completedSteps.stream()
+    /** Summarizer —— 基于所有步骤结果生成最终回复 */
+    private String invokeSummarizer(ExecutionContext ctx) {
+        String stepsInfo = ctx.completedSteps().stream()
                 .map(s -> "步骤「" + s.step() + "」结果:\n" + s.result())
                 .collect(Collectors.joining("\n\n"));
         String prompt = """
@@ -478,39 +347,40 @@ public class SkillExecutor {
                 %s
                 
                 请根据以上所有步骤的结果，生成对用户问题的最终完整回复。
-                """.formatted(skillPrompt, userMessage, stepsInfo);
+                """.formatted(ctx.cachedPrompt(), ctx.enrichedMessage(), stepsInfo);
 
-        return chatClientBuilder.build().prompt().system(skillPrompt).user(prompt).call().content();
+        return chatClientBuilder.build().prompt().system(ctx.cachedPrompt()).user(prompt).call().content();
     }
 
-    /**
-     * 格式化工具签名（含参数名、类型、required），供 Planner 判断参数是否齐全
-     */
-    private String formatToolSignatures(ToolCallback[] tools) {
-        if (tools == null || tools.length == 0) return "无";
-        StringBuilder sb = new StringBuilder();
-        for (ToolCallback tool : tools) {
-            var def = tool.getToolDefinition();
-            sb.append("- ").append(def.name()).append(": ").append(def.description()).append("\n");
-            String schema = def.inputSchema();
-            if (schema != null && !schema.isBlank()) {
-                sb.append("  参数 schema: ").append(schema).append("\n");
+    // ==================== 辅助方法 ====================
+
+    private boolean isAskUserStep(String step) {
+        return step.startsWith(ASK_USER_PREFIX) || step.startsWith("等待用户");
+    }
+
+    private String extractAskUserQuestion(String step) {
+        for (String sep : new String[]{"：", ":", "，", ","}) {
+            int idx = step.indexOf(sep);
+            if (idx > 0 && idx < step.length() - 1) {
+                String question = step.substring(idx + sep.length()).trim();
+                if (!question.isEmpty()) return question;
             }
         }
-        return sb.toString().trim();
+        return "请问您能提供更多信息吗？例如城市名称、订单号等。";
+    }
+
+    private boolean needsReplan(String observation) {
+        return observation != null && observation.toUpperCase().startsWith("REPLAN");
     }
 
     /**
      * 将对话历史拼接到用户消息中，让 LLM 看到多轮上下文
-     * 只取最近几轮（避免 token 过多），不包含当前这条（已单独传入）
      */
     private String enrichWithHistory(String conversationId, String userMessage) {
         List<Message> history = chatMemory.get(conversationId);
-        // history 中最后一条是刚写入的当前 userMessage，排除它
         if (history == null || history.size() <= 1) {
             return userMessage;
         }
-        // 取最近 16 条历史（不含当前消息），覆盖更多轮对话
         int end = history.size() - 1;
         int start = Math.max(0, end - 16);
         StringBuilder sb = new StringBuilder("## 对话历史（从早到晚）\n");
@@ -518,7 +388,6 @@ public class SkillExecutor {
             Message msg = history.get(i);
             String role = msg.getMessageType().name().toLowerCase();
             String text = msg.getText();
-            // 截断过长的助手回复（保留摘要，避免 token 浪费）
             if ("assistant".equals(role) && text != null && text.length() > 200) {
                 text = text.substring(0, 200) + "...（已截断）";
             }
@@ -526,22 +395,5 @@ public class SkillExecutor {
         }
         sb.append("\n## 当前用户消息\n").append(userMessage);
         return sb.toString();
-    }
-
-    /**
-     * 解析 Skill 声明的工具
-     */
-    private ToolCallback[] resolveTools(SkillDefinition skill) {
-        Map<String, ToolCallback> allTools = getAllTools();
-        List<ToolCallback> matched = new ArrayList<>();
-        for (String toolName : skill.allowedTools()) {
-            ToolCallback tool = findTool(allTools, toolName);
-            if (tool != null) {
-                matched.add(tool);
-            } else {
-                log.warn("[SkillExecutor] Skill [{}] 声明的工具 '{}' 未找到", skill.name(), toolName);
-            }
-        }
-        return matched.toArray(new ToolCallback[0]);
     }
 }

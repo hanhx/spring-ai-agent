@@ -399,6 +399,17 @@
         .plan-steps li.done { color: var(--accent); }
         .plan-steps li.done .step-icon { color: var(--accent); }
 
+        /* Multi-intent skill start marker */
+        .skill-start-marker {
+            margin: 10px 0 6px 0;
+            padding: 8px 12px;
+            background: var(--accent);
+            color: #fff;
+            border-radius: 8px;
+            font-size: 13px;
+        }
+        .skill-start-marker + .plan-steps { margin-top: 4px; }
+
         .step-result {
             margin: 2px 0 2px 26px;
             padding: 6px 10px;
@@ -873,6 +884,17 @@
         const content = thinkingBlock.querySelector('.thinking-content');
 
         switch (event.type) {
+            case 'skill_start':
+                // 多意图模式：显示子任务分隔标记
+                const skillDiv = document.createElement('div');
+                skillDiv.className = 'skill-start-marker';
+                skillDiv.innerHTML = `<strong>${escapeHtml(event.message)}</strong>`;
+                content.appendChild(skillDiv);
+                updateThinkingLabel(toggle, event.message, true);
+                toggle.classList.add('open');
+                content.classList.add('open');
+                break;
+
             case 'planning':
                 updateThinkingLabel(toggle, event.message, true);
                 // Auto-open thinking

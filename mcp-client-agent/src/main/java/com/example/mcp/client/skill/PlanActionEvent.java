@@ -30,6 +30,12 @@ public record PlanActionEvent(
         List<String> steps,
         String content
 ) {
+    /** 多意图：开始处理某个子任务 */
+    public static PlanActionEvent skillStart(int current, int total, String skillName, String subTask) {
+        String msg = String.format("📋 任务 %d/%d [%s]: %s", current, total, skillName, subTask);
+        return new PlanActionEvent("skill_start", msg, current, total, null, null, null);
+    }
+
     /** 正在规划 */
     public static PlanActionEvent planning(String message) {
         return new PlanActionEvent("planning", message, null, null, null, null, null);
