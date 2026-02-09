@@ -3,6 +3,7 @@ package com.example.mcp.client.skill;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -11,7 +12,6 @@ import reactor.core.scheduler.Schedulers;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 多意图执行器 —— 串行执行多个 Skill，跟踪追问状态，汇总结果
@@ -29,18 +29,35 @@ public class MultiIntentExecutor {
 
     private final SkillExecutor executor;
     private final ChatClient.Builder chatClientBuilder;
+    private final JdbcTemplate jdbc;
 
-    /** 待办意图队列：conversationId → 因追问而未执行的剩余意图 */
-    private final Map<String, List<SkillIntent>> pendingIntents = new ConcurrentHashMap<>();
-
-    public MultiIntentExecutor(SkillExecutor executor, ChatClient.Builder chatClientBuilder) {
+    public MultiIntentExecutor(SkillExecutor executor, ChatClient.Builder chatClientBuilder, JdbcTemplate jdbc) {
         this.executor = executor;
         this.chatClientBuilder = chatClientBuilder;
+        this.jdbc = jdbc;
     }
 
-    /** 取出并清除待办意图 */
+    /** 取出并清除待办意图（从 H2） */
     public List<SkillIntent> popPending(String conversationId) {
-        return pendingIntents.remove(conversationId);
+        List<SkillIntent> pending = jdbc.query(
+                "SELECT skill_name, sub_task FROM pending_intents WHERE conversation_id = ? ORDER BY id",
+                (rs, i) -> new SkillIntent(rs.getString("skill_name"), rs.getString("sub_task")),
+                conversationId);
+        if (!pending.isEmpty()) {
+            jdbc.update("DELETE FROM pending_intents WHERE conversation_id = ?", conversationId);
+            log.info("[MultiIntent] 从 H2 取出 {} 个待办意图", pending.size());
+        }
+        return pending.isEmpty() ? null : pending;
+    }
+
+    /** 保存待办意图到 H2 */
+    private void savePending(String conversationId, List<SkillIntent> intents) {
+        jdbc.update("DELETE FROM pending_intents WHERE conversation_id = ?", conversationId);
+        for (SkillIntent intent : intents) {
+            jdbc.update("INSERT INTO pending_intents (conversation_id, skill_name, sub_task) VALUES (?, ?, ?)",
+                    conversationId, intent.skillName(), intent.subTask());
+        }
+        log.info("[MultiIntent] 保存 {} 个待办意图到 H2", intents.size());
     }
 
     /** 合并新意图与待办意图（按 skillName 去重） */
@@ -84,8 +101,7 @@ public class MultiIntentExecutor {
 
             fluxes.add(Flux.defer(() -> {
                 if (askUserDetected[0]) {
-                    pendingIntents.put(conversationId, new ArrayList<>(intents.subList(intentIndex, intents.size())));
-                    log.info("[MultiIntent] 保存 {} 个待办意图", intents.size() - intentIndex);
+                    savePending(conversationId, new ArrayList<>(intents.subList(intentIndex, intents.size())));
                     return Flux.empty();
                 }
 
