@@ -147,7 +147,7 @@ public class SkillLoader {
         if (value == null || value.isBlank()) {
             return List.of();
         }
-        return Arrays.stream(value.split("\\s+"))
+        return Arrays.stream(value.split("[\\s,]+"))
                 .filter(s -> !s.isBlank())
                 .collect(Collectors.toList());
     }
