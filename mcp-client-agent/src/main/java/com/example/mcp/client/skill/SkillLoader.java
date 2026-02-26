@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 import java.io.BufferedReader;
@@ -11,7 +12,9 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -25,9 +28,12 @@ public class SkillLoader {
 
     private static final Logger log = LoggerFactory.getLogger(SkillLoader.class);
 
+    private final JdbcTemplate jdbc;
     private final List<SkillDefinition> skills;
+    private final Map<String, String> dbPrompts = new LinkedHashMap<>();
 
-    public SkillLoader() {
+    public SkillLoader(JdbcTemplate jdbc) {
+        this.jdbc = jdbc;
         this.skills = loadAllSkills();
     }
 
@@ -36,6 +42,21 @@ public class SkillLoader {
     }
 
     private List<SkillDefinition> loadAllSkills() {
+        List<SkillDefinition> classpathSkills = loadFromClasspath();
+        List<SkillDefinition> dbSkills = loadFromDatabase();
+
+        // 按 name 去重合并：DB 优先覆盖 classpath（便于线上动态调整）
+        Map<String, SkillDefinition> merged = new LinkedHashMap<>();
+        classpathSkills.forEach(skill -> merged.put(skill.name(), skill));
+        dbSkills.forEach(skill -> merged.put(skill.name(), skill));
+
+        List<SkillDefinition> result = new ArrayList<>(merged.values());
+        log.info("[SkillLoader] 共加载 {} 个 Skills（classpath: {}, db: {}）",
+                result.size(), classpathSkills.size(), dbSkills.size());
+        return result;
+    }
+
+    private List<SkillDefinition> loadFromClasspath() {
         List<SkillDefinition> result = new ArrayList<>();
         try {
             PathMatchingResourcePatternResolver resolver = new PathMatchingResourcePatternResolver();
@@ -63,7 +84,42 @@ public class SkillLoader {
             log.error("[SkillLoader] 扫描 skills 目录失败", e);
         }
 
-        log.info("[SkillLoader] 共加载 {} 个 Skills（仅 metadata）", result.size());
+        log.info("[SkillLoader] classpath 加载 {} 个 Skills", result.size());
+        return result;
+    }
+
+    private List<SkillDefinition> loadFromDatabase() {
+        List<SkillDefinition> result = new ArrayList<>();
+        try {
+            String sql = """
+                    SELECT name, description, allowed_tools, prompt_body
+                    FROM skill_registry
+                    WHERE enabled = TRUE
+                    ORDER BY priority DESC, id ASC
+                    """;
+
+            result = jdbc.query(sql, (rs, i) -> {
+                String name = rs.getString("name");
+                String description = rs.getString("description");
+                String allowedToolsRaw = rs.getString("allowed_tools");
+                String promptBody = rs.getString("prompt_body");
+
+                if (promptBody != null) {
+                    dbPrompts.put(name, promptBody);
+                }
+                return new SkillDefinition(
+                        name,
+                        description != null ? description : "",
+                        parseAllowedToolsRaw(allowedToolsRaw),
+                        "db:" + name
+                );
+            });
+
+            log.info("[SkillLoader] DB 加载 {} 个 Skills", result.size());
+        } catch (Exception e) {
+            // 首次启动/未建表场景可平滑降级到 classpath
+            log.warn("[SkillLoader] DB 加载 Skills 失败，降级为 classpath-only: {}", e.getMessage());
+        }
         return result;
     }
 
@@ -102,6 +158,15 @@ public class SkillLoader {
      * 遵循 agentskills.io Progressive Disclosure：Instructions 在 Skill 激活时加载
      */
     public String loadPrompt(SkillDefinition skill) {
+        if (skill.location() != null && skill.location().startsWith("db:")) {
+            String prompt = dbPrompts.get(skill.name());
+            if (prompt == null || prompt.isBlank()) {
+                log.warn("[SkillLoader] DB Skill [{}] 缺少 prompt_body", skill.name());
+                return "";
+            }
+            return prompt;
+        }
+
         try {
             PathMatchingResourcePatternResolver resolver = new PathMatchingResourcePatternResolver();
             Resource resource = resolver.getResource(skill.location());
@@ -149,6 +214,17 @@ public class SkillLoader {
         }
         return Arrays.stream(value.split("[\\s,]+"))
                 .filter(s -> !s.isBlank())
+                .collect(Collectors.toList());
+    }
+
+    private List<String> parseAllowedToolsRaw(String value) {
+        if (value == null || value.isBlank()) {
+            return List.of();
+        }
+        return Arrays.stream(value.split("[\\s,]+"))
+                .map(String::trim)
+                .filter(s -> !s.isBlank())
+                .distinct()
                 .collect(Collectors.toList());
     }
 }

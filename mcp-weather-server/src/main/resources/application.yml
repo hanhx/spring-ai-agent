@@ -10,6 +10,14 @@ spring:
         type: SYNC
         protocol: SSE
 
+weather:
+  api:
+    host: ${WEATHER_API_HOST:https://tinaqi.market.alicloudapi.com}
+    path: ${WEATHER_API_PATH:/area-to-weather-date}
+    appcode: ${WEATHER_API_APPCODE:}
+    connect-timeout-ms: ${WEATHER_API_CONNECT_TIMEOUT_MS:10000}
+    read-timeout-ms: ${WEATHER_API_READ_TIMEOUT_MS:10000}
+
 logging:
   level:
     com.example.mcp: DEBUG

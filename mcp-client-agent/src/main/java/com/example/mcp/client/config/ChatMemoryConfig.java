@@ -12,7 +12,7 @@ import org.springframework.context.annotation.Configuration;
  * 使用 MessageWindowChatMemory：
  * - 按 conversationId 隔离对话
  * - 滑动窗口保留最近 20 条消息（超出自动淘汰旧消息，SystemMessage 优先保留）
- * - 使用 JDBC 存储（当前为 H2 内存库，可替换为持久化数据库）
+ * - 使用 JDBC 存储（默认连接 MySQL，可通过环境变量切换连接参数）
  */
 @Configuration
 public class ChatMemoryConfig {

@@ -31,6 +31,7 @@ public class ExecutionContext {
     private int stepIndex = 0;
     private int replanCount = 0;
     private int askUserCount = 0;
+    private int totalExecutedSteps = 0;
     private boolean askUserTerminated = false;
 
     public ExecutionContext(SkillDefinition skill, String conversationId,
@@ -53,6 +54,7 @@ public class ExecutionContext {
     public int stepIndex() { return stepIndex; }
     public int replanCount() { return replanCount; }
     public int askUserCount() { return askUserCount; }
+    public int totalExecutedSteps() { return totalExecutedSteps; }
     public boolean isAskUserTerminated() { return askUserTerminated; }
 
     // ===== 状态操作 =====
@@ -84,6 +86,8 @@ public class ExecutionContext {
     public void advanceStep() { stepIndex++; }
 
     public void incrementReplan() { replanCount++; }
+
+    public void incrementExecutedSteps() { totalExecutedSteps++; }
 
     public void resetForReplan(List<String> newSteps) {
         addPlan(newSteps);

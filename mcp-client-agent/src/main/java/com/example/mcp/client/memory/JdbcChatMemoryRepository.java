@@ -18,7 +18,7 @@ import java.sql.SQLException;
 import java.util.List;
 
 /**
- * JDBC 기반 ChatMemoryRepository —— 使用 H2 内存数据库持久化对话记录
+ * JDBC 기반 ChatMemoryRepository —— 使用 MySQL 持久化对话记录
  *
  * 注意：保存时会覆盖同一 conversationId 的全部消息列表（与 InMemoryChatMemoryRepository 行为一致）
  */

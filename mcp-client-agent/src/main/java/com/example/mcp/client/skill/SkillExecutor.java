@@ -40,6 +40,7 @@ public class SkillExecutor {
 
     private static final int MAX_REPLAN_ROUNDS = 3;
     private static final int MAX_ASK_USER_ROUNDS = 4;
+    private static final int MAX_TOTAL_EXECUTED_STEPS = 20;
     private static final String ASK_USER_PREFIX = "追问用户";
 
     private final ChatClient.Builder chatClientBuilder;
@@ -168,6 +169,12 @@ public class SkillExecutor {
         if (!ctx.hasMoreSteps()) {
             return Flux.empty();
         }
+        if (ctx.totalExecutedSteps() >= MAX_TOTAL_EXECUTED_STEPS) {
+            String msg = "执行步骤过多，已自动停止以避免循环调用。请重试或调整问题范围。";
+            log.warn("[SkillExecutor] 命中执行上限({})，conversationId={}", MAX_TOTAL_EXECUTED_STEPS, ctx.conversationId());
+            chatMemory.add(ctx.conversationId(), new AssistantMessage(msg));
+            return Flux.just(PlanActionEvent.error(msg), PlanActionEvent.done());
+        }
 
         String currentStep = ctx.currentStep();
         int displayStep = ctx.currentStepDisplay();
@@ -188,6 +195,7 @@ public class SkillExecutor {
                     log.info("[Action] Step {}: {} → {}", displayStep, currentStep,
                             result.length() > 100 ? result.substring(0, 100) + "..." : result);
                     ctx.addCompletedStep(currentStep, result);
+                    ctx.incrementExecutedSteps();
                     return PlanActionEvent.actionDone(displayStep, totalSteps, currentStep, result);
                 }).subscribeOn(Schedulers.boundedElastic()),
 
@@ -200,7 +208,7 @@ public class SkillExecutor {
                     List<PlanActionEvent> events = new ArrayList<>();
                     events.add(PlanActionEvent.observe(displayStep, observation));
 
-                    if (needsReplan(observation) && ctx.replanCount() < MAX_REPLAN_ROUNDS) {
+                    if (shouldReplan(observation, lastResult.result()) && ctx.replanCount() < MAX_REPLAN_ROUNDS) {
                         ctx.incrementReplan();
                         log.info("[RePlan] 第 {} 次重新规划", ctx.replanCount());
                         List<String> newSteps = invokePlanner(ctx, ctx.completedSteps());
@@ -307,6 +315,10 @@ public class SkillExecutor {
 
     /** Observer —— 观察步骤结果，判断是否需要 RePlan */
     private String invokeObserver(ExecutionContext ctx, String stepDesc, String stepResult) {
+        if (!isStepFailureResult(stepResult)) {
+            return "OK: 步骤执行成功，按计划继续执行。";
+        }
+
         List<String> plan = ctx.currentPlan();
         int idx = ctx.stepIndex();
         String prompt = """
@@ -320,6 +332,8 @@ public class SkillExecutor {
                 请用一句话评估：
                 - 如果结果正常且剩余步骤合理，回复 "OK: [简要说明]"
                 - 如果结果异常或需要调整计划，回复 "REPLAN: [原因和建议]"
+                - 只依据“执行结果”是否失败来判断，禁止根据常识臆测当前日期/年份/时间
+                - 如果执行结果本身没有报错，不得输出 REPLAN
                 """.formatted(
                 ctx.enrichedMessage(), stepDesc,
                 stepResult.length() > 500 ? stepResult.substring(0, 500) + "..." : stepResult,
@@ -338,24 +352,76 @@ public class SkillExecutor {
         String stepsInfo = ctx.completedSteps().stream()
                 .map(s -> "步骤「" + s.step() + "」结果:\n" + s.result())
                 .collect(Collectors.joining("\n\n"));
-        String prompt = """
+        String primaryPrompt = """
                 %s
                 
-                用户问题: %s
-                
-                以下是已执行步骤及其结果：
+                你是结果总结助手。请基于以下已执行步骤结果，给用户生成最终答复：
+                - 答复要直接、简洁
+                - 不要编造步骤结果中不存在的信息
+                - 如果步骤里有失败信息，要如实说明并给出下一步建议
+
+                用户问题：
                 %s
-                
-                请根据以上所有步骤的结果，生成对用户问题的最终完整回复。
+
+                已执行步骤结果：
+                %s
                 """.formatted(ctx.cachedPrompt(), ctx.enrichedMessage(), stepsInfo);
 
-        return chatClientBuilder.build().prompt().system(ctx.cachedPrompt()).user(prompt).call().content();
+        try {
+            return callSummarizer(ctx.cachedPrompt(), primaryPrompt);
+        } catch (Exception firstError) {
+            log.warn("[Summarizer] 第一层总结失败，尝试轻量重试: {}", firstError.getMessage());
+        }
+
+        String retryPrompt = """
+                请基于下面步骤结果，给出最终用户回复。
+                要求：
+                1) 不编造信息
+                2) 失败要明确标注
+                3) 120字以内
+
+                用户问题：%s
+                步骤结果：%s
+                """.formatted(ctx.userMessage(), stepsInfo);
+
+        try {
+            return callSummarizer(null, retryPrompt);
+        } catch (Exception secondError) {
+            log.warn("[Summarizer] 第二层总结仍失败，返回确定性兜底结果: {}", secondError.getMessage());
+            return buildFallbackSummary(ctx);
+        }
     }
 
-    // ==================== 辅助方法 ====================
+    private String callSummarizer(String systemPrompt, String userPrompt) {
+        String content;
+        if (systemPrompt == null || systemPrompt.isBlank()) {
+            content = chatClientBuilder.build().prompt().user(userPrompt).call().content();
+        } else {
+            content = chatClientBuilder.build().prompt().system(systemPrompt).user(userPrompt).call().content();
+        }
+        if (content == null || content.isBlank()) {
+            throw new IllegalStateException("Summarizer returned empty content");
+        }
+        return content;
+    }
+
+    private String buildFallbackSummary(ExecutionContext ctx) {
+        if (ctx.completedSteps().isEmpty()) {
+            return "处理请求时发生网络波动，暂未拿到可用结果，请稍后重试。";
+        }
+
+        StringBuilder sb = new StringBuilder("本次请求已执行完成，因总结阶段网络超时，先返回步骤结果：\n\n");
+        for (int i = 0; i < ctx.completedSteps().size(); i++) {
+            ExecutionContext.StepResult step = ctx.completedSteps().get(i);
+            sb.append(i + 1).append(". ").append(step.step()).append("\n");
+            sb.append(step.result()).append("\n\n");
+        }
+        sb.append("（提示：可重试一次以获取更精炼的最终回复）");
+        return sb.toString().trim();
+    }
 
     private boolean isAskUserStep(String step) {
-        return step.startsWith(ASK_USER_PREFIX) || step.startsWith("等待用户");
+        return step != null && step.trim().startsWith(ASK_USER_PREFIX);
     }
 
     private String extractAskUserQuestion(String step) {
@@ -371,6 +437,23 @@ public class SkillExecutor {
 
     private boolean needsReplan(String observation) {
         return observation != null && observation.toUpperCase().startsWith("REPLAN");
+    }
+
+    private boolean shouldReplan(String observation, String stepResult) {
+        return needsReplan(observation) && isStepFailureResult(stepResult);
+    }
+
+    private boolean isStepFailureResult(String stepResult) {
+        if (stepResult == null || stepResult.isBlank()) {
+            return true;
+        }
+        String text = stepResult.toLowerCase();
+        return text.contains("执行失败")
+                || text.contains("error")
+                || text.contains("exception")
+                || text.contains("未配置")
+                || text.contains("出错")
+                || text.contains("无法获取");
     }
 
     /**

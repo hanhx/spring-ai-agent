@@ -1,7 +1,10 @@
 package com.example.mcp.weather.tool;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Service;
@@ -12,219 +15,282 @@ import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * MCP Server 工具：天气查询
- * 调用 wttr.in 免费天气 API 获取实时天气信息
+ * 调用阿里云市场天气 API（APPCODE 鉴权）获取天气信息
  */
 @Service
 public class WeatherTools {
 
     private static final Logger log = LoggerFactory.getLogger(WeatherTools.class);
+    private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyyMMdd");
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
+    @Value("${weather.api.host:https://tinaqi.market.alicloudapi.com}")
+    private String apiHost;
+
+    @Value("${weather.api.path:/area-to-weather-date}")
+    private String apiPath;
+
+    @Value("${weather.api.appcode:}")
+    private String appCode;
+
+    @Value("${weather.api.connect-timeout-ms:10000}")
+    private int connectTimeoutMs;
+
+    @Value("${weather.api.read-timeout-ms:10000}")
+    private int readTimeoutMs;
 
     @Tool(description = "查询指定城市的实时天气信息，包括温度、湿度、风速、天气描述等。支持中英文城市名，如 Beijing、上海、Tokyo。")
     public String getWeather(
             @ToolParam(description = "城市名称，如 Beijing、上海、Tokyo") String city) {
 
-        log.info("[WeatherTools] Querying weather for: {}", city);
-
-        try {
-            String encodedCity = URLEncoder.encode(city, StandardCharsets.UTF_8);
-            String urlStr = "https://wttr.in/" + encodedCity + "?format=j1";
-
-            URI uri = URI.create(urlStr);
-            HttpURLConnection conn = (HttpURLConnection) uri.toURL().openConnection();
-            conn.setRequestMethod("GET");
-            conn.setRequestProperty("Accept", "application/json");
-            conn.setRequestProperty("User-Agent", "spring-ai-mcp-server/1.0");
-            conn.setConnectTimeout(10000);
-            conn.setReadTimeout(10000);
-
-            int responseCode = conn.getResponseCode();
-            if (responseCode == 200) {
-                BufferedReader reader = new BufferedReader(
-                        new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8));
-                StringBuilder sb = new StringBuilder();
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    sb.append(line);
-                }
-                reader.close();
-                return parseWeatherJson(city, sb.toString());
-            } else {
-                return "无法获取「" + city + "」的天气信息，API 返回状态码: " + responseCode;
-            }
-        } catch (Exception e) {
-            log.error("[WeatherTools] Error: {}", e.getMessage());
-            return "查询「" + city + "」天气时出错: " + e.getMessage();
-        }
+        return queryAliyunWeather(city, false);
     }
 
     @Tool(description = "查询指定城市未来3天的天气预报，包括每天的最高温、最低温、天气描述、降水概率等。支持中英文城市名，如 Beijing、上海、Tokyo。适用于用户询问明天、后天或未来几天天气的场景。")
     public String getWeatherForecast(
             @ToolParam(description = "城市名称，如 Beijing、上海、Tokyo") String city) {
 
-        log.info("[WeatherTools] Querying weather forecast for: {}", city);
+        return queryAliyunWeather(city, true);
+    }
+
+    private String queryAliyunWeather(String city, boolean forecast) {
+        if (city == null || city.isBlank()) {
+            return "请提供要查询的城市名称。";
+        }
+        String resolvedAppCode = resolveAppCode();
+        if (resolvedAppCode == null || resolvedAppCode.isBlank()) {
+            return "天气服务未配置 AppCode，请设置环境变量 WEATHER_API_APPCODE。";
+        }
+
+        log.info("[WeatherTools] Query aliyun weather, city={}, forecast={}", city, forecast);
+
+        Map<String, String> querys = new LinkedHashMap<>();
+        querys.put("area", city.trim());
+        querys.put("date", LocalDate.now().format(DATE_FORMATTER));
+        querys.put("need3HourForcast", forecast ? "1" : "0");
 
         try {
-            String encodedCity = URLEncoder.encode(city, StandardCharsets.UTF_8);
-            String urlStr = "https://wttr.in/" + encodedCity + "?format=j1";
-
-            URI uri = URI.create(urlStr);
-            HttpURLConnection conn = (HttpURLConnection) uri.toURL().openConnection();
-            conn.setRequestMethod("GET");
-            conn.setRequestProperty("Accept", "application/json");
-            conn.setRequestProperty("User-Agent", "spring-ai-mcp-server/1.0");
-            conn.setConnectTimeout(10000);
-            conn.setReadTimeout(10000);
-
-            int responseCode = conn.getResponseCode();
-            if (responseCode == 200) {
-                BufferedReader reader = new BufferedReader(
-                        new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8));
-                StringBuilder sb = new StringBuilder();
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    sb.append(line);
-                }
-                reader.close();
-                return parseForecastJson(city, sb.toString());
-            } else {
-                return "无法获取「" + city + "」的天气预报，API 返回状态码: " + responseCode;
+            ApiResponse apiResponse = executeRequest(querys, resolvedAppCode);
+            if (apiResponse.statusCode() != 200) {
+                return "无法获取「" + city + "」天气信息，API 状态码: " + apiResponse.statusCode()
+                        + "\n错误详情: " + truncate(apiResponse.body(), 400);
             }
+            return formatAliyunResponse(city, apiResponse.body(), forecast);
         } catch (Exception e) {
-            log.error("[WeatherTools] Forecast error: {}", e.getMessage());
-            return "查询「" + city + "」天气预报时出错: " + e.getMessage();
+            log.error("[WeatherTools] Aliyun weather query failed, city={}, forecast={}", city, forecast, e);
+            return "查询「" + city + "」天气时出错: " + e.getMessage();
         }
     }
 
-    private String parseForecastJson(String city, String json) {
+    private ApiResponse executeRequest(Map<String, String> querys, String resolvedAppCode) throws Exception {
+        String query = querys.entrySet().stream()
+                .filter(e -> e.getValue() != null && !e.getValue().isBlank())
+                .map(e -> e.getKey() + "=" + URLEncoder.encode(e.getValue(), StandardCharsets.UTF_8))
+                .collect(Collectors.joining("&"));
+
+        String normalizedHost = apiHost.endsWith("/") ? apiHost.substring(0, apiHost.length() - 1) : apiHost;
+        String normalizedPath = apiPath.startsWith("/") ? apiPath : "/" + apiPath;
+        URI uri = URI.create(normalizedHost + normalizedPath + (query.isEmpty() ? "" : "?" + query));
+
+        HttpURLConnection conn = (HttpURLConnection) uri.toURL().openConnection();
+        conn.setRequestMethod("GET");
+        conn.setRequestProperty("Authorization", "APPCODE " + resolvedAppCode.trim());
+        conn.setRequestProperty("Accept", "application/json");
+        conn.setConnectTimeout(connectTimeoutMs);
+        conn.setReadTimeout(readTimeoutMs);
+
+        int statusCode = conn.getResponseCode();
+        String body;
+        if (statusCode >= 200 && statusCode < 300) {
+            body = readAll(conn.getInputStream());
+        } else {
+            body = conn.getErrorStream() != null ? readAll(conn.getErrorStream()) : "";
+        }
+        return new ApiResponse(statusCode, body);
+    }
+
+    private String resolveAppCode() {
+        if (appCode != null && !appCode.isBlank()) {
+            return appCode;
+        }
+        String fromEnv = System.getenv("WEATHER_API_APPCODE");
+        if (fromEnv != null && !fromEnv.isBlank()) {
+            return fromEnv;
+        }
+        return null;
+    }
+
+    private String readAll(java.io.InputStream inputStream) throws Exception {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8))) {
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                sb.append(line);
+            }
+            return sb.toString();
+        }
+    }
+
+    private String formatAliyunResponse(String city, String json, boolean forecast) {
+        if (json == null || json.isBlank()) {
+            return "城市: " + city + "\n天气服务返回空结果。";
+        }
+
         try {
+            JsonNode root = objectMapper.readTree(json);
+            int showApiCode = root.path("showapi_res_code").asInt(0);
+            JsonNode bodyNode = root.path("showapi_res_body");
+            int retCode = bodyNode.path("ret_code").asInt(0);
+
+            if (showApiCode != 0 || retCode != 0) {
+                String err = root.path("showapi_res_error").asText("");
+                if (err.isBlank()) {
+                    err = bodyNode.path("remark").asText("天气服务返回异常");
+                }
+                return "查询「" + city + "」天气失败: " + err;
+            }
+
+            JsonNode cityInfo = bodyNode.path("cityInfo");
+            JsonNode dayNode = bodyNode.path("f1");
+
+            String cityName = textOr(cityInfo.path("c5"), city);
+            String province = textOr(cityInfo.path("c7"), null);
+            String date = textOr(dayNode.path("day"), textOr(bodyNode.path("date"), null));
+            String dayWeather = textOr(dayNode.path("day_weather"), null);
+            String nightWeather = textOr(dayNode.path("night_weather"), null);
+            String dayTemp = textOr(dayNode.path("day_air_temperature"), null);
+            String nightTemp = textOr(dayNode.path("night_air_temperature"), null);
+            String dayWindDir = textOr(dayNode.path("day_wind_direction"), null);
+            String dayWindPower = textOr(dayNode.path("day_wind_power"), null);
+            String humidity = textOr(dayNode.path("sd"), null);
+            String pressure = textOr(dayNode.path("air_press"), null);
+            String rainProb = textOr(dayNode.path("jiangshui"), null);
+            String uv = textOr(dayNode.path("ziwaixian"), null);
+            String clothes = textOr(dayNode.path("index").path("clothes").path("title"), null);
+            String comfort = textOr(dayNode.path("index").path("comfort").path("title"), null);
+
             StringBuilder result = new StringBuilder();
-            result.append("城市: ").append(city).append(" — 未来3天天气预报\n\n");
-
-            // wttr.in 的 weather 数组包含3天预报
-            String weatherArrayKey = "\"weather\"";
-            int weatherIdx = json.indexOf(weatherArrayKey);
-            if (weatherIdx < 0) {
-                return "城市: " + city + "\n未找到预报数据";
+            result.append("城市: ").append(cityName);
+            if (province != null) {
+                result.append("（").append(province).append("）");
+            }
+            result.append("\n");
+            result.append("数据源: 阿里云天气 API\n");
+            if (date != null) {
+                result.append("日期: ").append(date).append("\n");
             }
 
-            // 找到 weather 数组的起始 [
-            int arrStart = json.indexOf("[", weatherIdx);
-            if (arrStart < 0) return "城市: " + city + "\n预报数据格式异常";
+            if (dayWeather != null || nightWeather != null) {
+                result.append("天气: ").append(dayWeather != null ? dayWeather : "-")
+                        .append(" / 夜间 ").append(nightWeather != null ? nightWeather : "-")
+                        .append("\n");
+            }
+            if (dayTemp != null || nightTemp != null) {
+                result.append("气温: ").append(nightTemp != null ? nightTemp : "?")
+                        .append("~")
+                        .append(dayTemp != null ? dayTemp : "?")
+                        .append("°C\n");
+            }
+            if (dayWindDir != null || dayWindPower != null) {
+                result.append("风况: ")
+                        .append(dayWindDir != null ? dayWindDir : "")
+                        .append(dayWindPower != null ? " " + dayWindPower : "")
+                        .append("\n");
+            }
+            if (humidity != null) result.append("湿度: ").append(humidity).append("\n");
+            if (pressure != null) result.append("气压: ").append(pressure).append("\n");
+            if (rainProb != null) result.append("降水概率: ").append(rainProb).append("\n");
+            if (uv != null) result.append("紫外线: ").append(uv).append("\n");
+            if (clothes != null) result.append("穿衣建议: ").append(clothes).append("\n");
+            if (comfort != null) result.append("体感舒适度: ").append(comfort).append("\n");
 
-            // 逐天解析（最多3天）
-            int searchPos = arrStart;
-            for (int day = 0; day < 3; day++) {
-                // 找到每天的 { ... } 块
-                int objStart = json.indexOf("{", searchPos + 1);
-                if (objStart < 0) break;
-
-                // 找到匹配的 }（简单计数）
-                int depth = 0;
-                int objEnd = objStart;
-                for (int i = objStart; i < json.length(); i++) {
-                    if (json.charAt(i) == '{') depth++;
-                    else if (json.charAt(i) == '}') {
-                        depth--;
-                        if (depth == 0) { objEnd = i + 1; break; }
+            if (forecast) {
+                List<String> lines = extract3HourForecastLines(dayNode.path("3hourForcast"), 4);
+                if (!lines.isEmpty()) {
+                    result.append("\n未来分时预报:\n");
+                    for (String line : lines) {
+                        result.append("- ").append(line).append("\n");
                     }
                 }
-
-                String dayJson = json.substring(objStart, objEnd);
-                String date = extractJsonValue(dayJson, "date");
-                String maxTemp = extractJsonValue(dayJson, "maxtempC");
-                String minTemp = extractJsonValue(dayJson, "mintempC");
-                String avgTemp = extractJsonValue(dayJson, "avgtempC");
-                String sunHour = extractJsonValue(dayJson, "sunHour");
-                String totalSnow = extractJsonValue(dayJson, "totalSnow_cm");
-                String uvIndex = extractJsonValue(dayJson, "uvIndex");
-
-                // 从 hourly 数组中提取天气描述（取中午12点的）
-                String dayDesc = null;
-                int hourlyIdx = dayJson.indexOf("\"hourly\"");
-                if (hourlyIdx >= 0) {
-                    // 找第3个 hourly 条目（约12:00）
-                    String hourlySection = dayJson.substring(hourlyIdx);
-                    dayDesc = extractJsonArrayValue(hourlySection, "weatherDesc", "value");
-                    // 尝试获取降水概率
-                    String chanceOfRain = extractJsonValue(hourlySection, "chanceofrain");
-                    if (chanceOfRain != null && !chanceOfRain.equals("0")) {
-                        if (dayDesc == null) dayDesc = "";
-                        dayDesc += "（降水概率: " + chanceOfRain + "%）";
-                    }
-                }
-
-                String dayLabel = day == 0 ? "今天" : day == 1 ? "明天" : "后天";
-                result.append("### ").append(dayLabel);
-                if (date != null) result.append("（").append(date).append("）");
-                result.append("\n");
-                result.append("- 温度: ").append(minTemp).append("°C ~ ").append(maxTemp).append("°C");
-                if (avgTemp != null) result.append("，均温 ").append(avgTemp).append("°C");
-                result.append("\n");
-                if (dayDesc != null) result.append("- 天气: ").append(dayDesc).append("\n");
-                if (uvIndex != null) result.append("- 紫外线指数: ").append(uvIndex).append("\n");
-                if (sunHour != null) result.append("- 日照时长: ").append(sunHour).append(" 小时\n");
-                result.append("\n");
-
-                searchPos = objEnd;
             }
 
+            if (result.toString().lines().count() <= 4) {
+                result.append("原始数据片段: ").append(truncate(json, 500));
+            }
             return result.toString().trim();
         } catch (Exception e) {
-            return "城市: " + city + "\n预报解析出错: " + e.getMessage();
+            log.warn("[WeatherTools] Parse aliyun weather response failed: {}", e.getMessage());
+            return "城市: " + city + "\n原始天气数据: " + truncate(json, 500);
         }
     }
 
-    private String parseWeatherJson(String city, String json) {
-        try {
-            String temp = extractJsonValue(json, "temp_C");
-            String feelsLike = extractJsonValue(json, "FeelsLikeC");
-            String humidity = extractJsonValue(json, "humidity");
-            String windSpeed = extractJsonValue(json, "windspeedKmph");
-            String windDir = extractJsonValue(json, "winddir16Point");
-            String weatherDesc = extractJsonArrayValue(json, "weatherDesc", "value");
-            String visibility = extractJsonValue(json, "visibility");
-            String pressure = extractJsonValue(json, "pressure");
-
-            StringBuilder result = new StringBuilder();
-            result.append("城市: ").append(city).append("\n");
-            result.append("温度: ").append(temp).append("°C");
-            if (feelsLike != null) result.append("（体感 ").append(feelsLike).append("°C）");
-            result.append("\n");
-            if (weatherDesc != null) result.append("天气: ").append(weatherDesc).append("\n");
-            result.append("湿度: ").append(humidity).append("%\n");
-            result.append("风速: ").append(windSpeed).append(" km/h");
-            if (windDir != null) result.append("，风向: ").append(windDir);
-            result.append("\n");
-            if (visibility != null) result.append("能见度: ").append(visibility).append(" km\n");
-            if (pressure != null) result.append("气压: ").append(pressure).append(" hPa\n");
-            return result.toString();
-        } catch (Exception e) {
-            return "城市: " + city + "\n原始天气数据: " + json.substring(0, Math.min(json.length(), 500));
+    private List<String> extract3HourForecastLines(JsonNode forecastArray, int limit) {
+        List<String> lines = new ArrayList<>();
+        if (forecastArray == null || !forecastArray.isArray()) {
+            return lines;
         }
+
+        int count = 0;
+        for (JsonNode node : forecastArray) {
+            if (count++ >= limit) {
+                break;
+            }
+            String hour = textOr(node.path("hour"), null);
+            String weather = textOr(node.path("weather"), null);
+            String temp = textOr(node.path("temperature"), null);
+            String min = textOr(node.path("temperature_min"), null);
+            String max = textOr(node.path("temperature_max"), null);
+            String windDir = textOr(node.path("wind_direction"), null);
+            String windPower = textOr(node.path("wind_power"), null);
+
+            StringBuilder sb = new StringBuilder();
+            if (hour != null) sb.append(hour).append(" ");
+            if (weather != null) sb.append(weather).append(" ");
+            if (temp != null) sb.append(temp).append("°C ");
+            if (min != null || max != null) {
+                sb.append("(").append(min != null ? min : "?")
+                        .append("~")
+                        .append(max != null ? max : "?")
+                        .append("°C) ");
+            }
+            if (windDir != null || windPower != null) {
+                sb.append(windDir != null ? windDir : "")
+                        .append(windPower != null ? " " + windPower : "");
+            }
+            String text = sb.toString().trim();
+            if (!text.isBlank()) {
+                lines.add(text);
+            }
+        }
+        return lines;
     }
 
-    private String extractJsonValue(String json, String key) {
-        String searchKey = "\"" + key + "\"";
-        int idx = json.indexOf(searchKey);
-        if (idx < 0) return null;
-        int colonIdx = json.indexOf(":", idx + searchKey.length());
-        if (colonIdx < 0) return null;
-        int start = colonIdx + 1;
-        while (start < json.length() && (json.charAt(start) == ' ' || json.charAt(start) == '"')) start++;
-        int end = start;
-        while (end < json.length() && json.charAt(end) != '"' && json.charAt(end) != ',' && json.charAt(end) != '}') end++;
-        return json.substring(start, end).trim();
+    private String textOr(JsonNode node, String defaultValue) {
+        if (node == null || node.isMissingNode() || node.isNull()) {
+            return defaultValue;
+        }
+        String text = node.asText();
+        return text == null || text.isBlank() ? defaultValue : text;
     }
 
-    private String extractJsonArrayValue(String json, String arrayKey, String valueKey) {
-        String searchKey = "\"" + arrayKey + "\"";
-        int idx = json.indexOf(searchKey);
-        if (idx < 0) return null;
-        int searchEnd = Math.min(idx + 200, json.length());
-        String sub = json.substring(idx, searchEnd);
-        return extractJsonValue(sub, valueKey);
+    private String truncate(String value, int maxLen) {
+        if (value == null) {
+            return "";
+        }
+        return value.length() <= maxLen ? value : value.substring(0, maxLen) + "...";
+    }
+
+    private record ApiResponse(int statusCode, String body) {
     }
 }

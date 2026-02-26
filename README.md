@@ -32,7 +32,7 @@ Client 自动连接多个 MCP Server，聚合所有工具，通过 **Skills + Pl
 │  │ 订单/退款/物流 │       │   │    wttr.in API           │
 │  └──────┬────────┘       │   └──────────────────────────┘
 │         │                │
-│    H2 数据库              │
+│   H2/MySQL 数据库         │
 └──────────────────────────┘
 ```
 
@@ -52,7 +52,7 @@ Client 自动连接多个 MCP Server，聚合所有工具，通过 **Skills + Pl
 | `mcp-server` | `queryOrder` | 根据订单号/用户名查询订单详情 |
 | `mcp-server` | `applyRefund` | 发起退款申请（含状态校验） |
 | `mcp-server` | `trackLogistics` | 物流追踪（快递公司识别+时间线） |
-| `mcp-weather-server` | `getWeather` | 调用 wttr.in API 查询实时天气 |
+| `mcp-weather-server` | `getWeather` | 调用阿里云天气 API（APPCODE 鉴权）查询实时天气 |
 
 ## Skills 架构
 
@@ -88,6 +88,9 @@ export OPENAI_API_KEY=sk-your-key-here
 # 可选（默认使用阿里云通义千问）
 export OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 export OPENAI_MODEL=qwen-plus
+
+# 天气服务（mcp-weather-server）需要阿里云市场 AppCode
+export WEATHER_API_APPCODE=your-appcode
 ```
 
 ### 2. 启动服务（按顺序）
@@ -243,4 +246,4 @@ tools:
 - **MCP Server**: `spring-ai-starter-mcp-server-webmvc` (SSE)
 - **MCP Client**: `spring-ai-starter-mcp-client` (自管理连接)
 - **LLM**: OpenAI 兼容 API（默认通义千问 qwen-plus）
-- **数据库**: H2 内存数据库（模拟电商数据）
+- **数据库**: mcp-server 使用 H2（模拟业务数据），mcp-client-agent 使用 MySQL（对话记忆与技能配置持久化）
