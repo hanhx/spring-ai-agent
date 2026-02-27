@@ -4,6 +4,6 @@ import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration
-@MapperScan("com.hhx.agi.infra.dao")
+@MapperScan("com.hhx.agi.infra")
 public class MyBatisConfig {
 }

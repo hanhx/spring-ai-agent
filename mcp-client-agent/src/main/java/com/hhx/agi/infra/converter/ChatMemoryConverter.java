@@ -1,8 +1,8 @@
 package com.hhx.agi.infra.converter;
 
-import com.hhx.agi.domain.chat.model.ChatMemory;
-import com.hhx.agi.domain.chat.model.ConversationId;
-import com.hhx.agi.domain.chat.model.Message;
+import com.hhx.agi.domain.model.ChatMemory;
+import com.hhx.agi.domain.model.ConversationId;
+import com.hhx.agi.domain.model.Message;
 import com.hhx.agi.infra.po.ChatMemoryPO;
 import org.apache.commons.collections4.CollectionUtils;
 

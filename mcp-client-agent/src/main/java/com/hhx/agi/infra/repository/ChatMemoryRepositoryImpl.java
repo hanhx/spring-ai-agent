@@ -1,8 +1,8 @@
 package com.hhx.agi.infra.repository;
 
-import com.hhx.agi.domain.chat.model.ChatMemory;
-import com.hhx.agi.domain.chat.model.ConversationId;
-import com.hhx.agi.domain.chat.repository.ChatMemoryRepository;
+import com.hhx.agi.domain.model.ChatMemory;
+import com.hhx.agi.domain.model.ConversationId;
+import com.hhx.agi.domain.repository.ChatMemoryRepository;
 import com.hhx.agi.infra.converter.ChatMemoryConverter;
 import com.hhx.agi.infra.dao.ChatMemoryMapper;
 import com.hhx.agi.infra.po.ChatMemoryPO;

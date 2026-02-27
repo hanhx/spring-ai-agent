@@ -2,8 +2,8 @@ package com.hhx.agi.application.assembler;
 
 import com.hhx.agi.application.dto.ChatHistoryDTO;
 import com.hhx.agi.application.dto.ChatMessageDTO;
-import com.hhx.agi.domain.chat.model.ChatMemory;
-import com.hhx.agi.domain.chat.model.Message;
+import com.hhx.agi.domain.model.ChatMemory;
+import com.hhx.agi.domain.model.Message;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
 
