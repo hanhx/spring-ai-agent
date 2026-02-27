@@ -1,17 +1,16 @@
 package com.example.mcp.client.skill;
 
+import com.example.mcp.client.client.DashScopeEmbeddingClient;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.ai.embedding.EmbeddingModel;
-import org.springframework.ai.embedding.EmbeddingResponse;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
 
 /**
- * Skill 语义索引 —— 启动时对所有 Skill 的 description 做 Embedding，
- * 运行时用余弦相似度检索 Top-K 最相关的 Skill，减少 Router Prompt 的 token 消耗。
+ * Skill 候选检索 —— 优先使用 Embedding 检索 Top-K（若启用且可用），
+ * 否则降级到词法打分（名称命中 + token 重叠 + bigram 相似度）。
  *
  * 当 Skill 数量较少（<= topK）时自动退化为全量返回，无额外开销。
  */
@@ -21,18 +20,19 @@ public class SkillEmbeddingIndex {
     private static final Logger log = LoggerFactory.getLogger(SkillEmbeddingIndex.class);
 
     private static final int DEFAULT_TOP_K = 5;
-
-    private final EmbeddingModel embeddingModel;
+    private final DashScopeEmbeddingClient embeddingClient;
     private final SkillLoader skillLoader;
-
-    /** Skill name → embedding vector */
+    private final boolean embeddingEnabled;
     private final Map<String, float[]> skillVectors = new LinkedHashMap<>();
-    private final Map<String, SkillDefinition> skillMap = new LinkedHashMap<>();
     private boolean indexReady = false;
 
-    public SkillEmbeddingIndex(EmbeddingModel embeddingModel, SkillLoader skillLoader) {
-        this.embeddingModel = embeddingModel;
+    public SkillEmbeddingIndex(
+            DashScopeEmbeddingClient embeddingClient,
+            SkillLoader skillLoader,
+            @org.springframework.beans.factory.annotation.Value("${dashscope.embedding.enabled:true}") boolean embeddingEnabled) {
+        this.embeddingClient = embeddingClient;
         this.skillLoader = skillLoader;
+        this.embeddingEnabled = embeddingEnabled;
     }
 
     @PostConstruct
@@ -44,29 +44,42 @@ public class SkillEmbeddingIndex {
                 return;
             }
 
-            // 收集所有 description 做批量 embedding
+            if (!embeddingEnabled) {
+                log.info("[SkillEmbeddingIndex] Embedding 未启用，使用词法 Top-K 路由");
+                indexReady = false;
+                return;
+            }
+
+            if (skills.size() <= DEFAULT_TOP_K) {
+                log.info("[SkillEmbeddingIndex] Skill 数量({}) <= topK({})，直接走全量/词法路由", skills.size(), DEFAULT_TOP_K);
+                indexReady = false;
+                return;
+            }
+
             List<String> texts = new ArrayList<>();
             List<String> names = new ArrayList<>();
             for (SkillDefinition skill : skills) {
                 names.add(skill.name());
                 texts.add(skill.name() + ": " + skill.description());
-                skillMap.put(skill.name(), skill);
             }
 
-            log.info("[SkillEmbeddingIndex] 正在为 {} 个 Skill 生成 Embedding...", texts.size());
-            EmbeddingResponse response = embeddingModel.embedForResponse(texts);
+            log.info("[SkillEmbeddingIndex] 正在为 {} 个 Skill 生成 Embedding (DashScope API)...", texts.size());
+            List<float[]> vectors = embeddingClient.embedTexts(texts);
 
+            skillVectors.clear();
             for (int i = 0; i < names.size(); i++) {
-                float[] vector = response.getResults().get(i).getOutput();
+                float[] vector = vectors.get(i);
                 skillVectors.put(names.get(i), vector);
             }
 
-            indexReady = true;
-            log.info("[SkillEmbeddingIndex] 索引构建完成，共 {} 个 Skill，向量维度: {}",
-                    skillVectors.size(),
-                    skillVectors.values().iterator().next().length);
+            indexReady = !skillVectors.isEmpty();
+            if (indexReady) {
+                log.info("[SkillEmbeddingIndex] 索引构建完成，共 {} 个 Skill，向量维度: {}",
+                        skillVectors.size(),
+                        skillVectors.values().iterator().next().length);
+            }
         } catch (Exception e) {
-            log.error("[SkillEmbeddingIndex] 索引构建失败，将降级为全量路由: {}", e.getMessage());
+            log.warn("[SkillEmbeddingIndex] 索引构建失败，降级为词法 Top-K: {}", e.getMessage());
             indexReady = false;
         }
     }
@@ -79,16 +92,17 @@ public class SkillEmbeddingIndex {
     public List<SkillDefinition> retrieveTopK(String userMessage, int topK) {
         List<SkillDefinition> allSkills = skillLoader.getSkills();
 
-        // 降级：索引未就绪或 Skill 数量不多，直接返回全部
-        if (!indexReady || allSkills.size() <= topK) {
+        if (allSkills.size() <= topK) {
             return allSkills;
         }
 
-        try {
-            // 对用户消息做 embedding
-            float[] queryVector = embeddingModel.embed(userMessage);
+        if (!embeddingEnabled || !indexReady) {
+            return retrieveTopKByLexical(userMessage, allSkills, topK);
+        }
 
-            // 计算余弦相似度并排序
+        try {
+            float[] queryVector = embeddingClient.embedSingleText(userMessage);
+
             List<Map.Entry<String, Double>> scores = new ArrayList<>();
             for (Map.Entry<String, float[]> entry : skillVectors.entrySet()) {
                 double sim = cosineSimilarity(queryVector, entry.getValue());
@@ -96,12 +110,10 @@ public class SkillEmbeddingIndex {
             }
             scores.sort((a, b) -> Double.compare(b.getValue(), a.getValue()));
 
-            // 取 Top-K
             Set<String> selected = new LinkedHashSet<>();
             for (int i = 0; i < Math.min(topK, scores.size()); i++) {
                 selected.add(scores.get(i).getKey());
             }
-            // 确保 chitchat 始终在候选中
             selected.add("chitchat");
 
             List<SkillDefinition> result = new ArrayList<>();
@@ -111,12 +123,12 @@ public class SkillEmbeddingIndex {
                 }
             }
 
-            log.info("[SkillEmbeddingIndex] 检索 Top-{}: {} (from {} skills)",
+            log.info("[SkillEmbeddingIndex] Embedding Top-{}: {} (from {} skills)",
                     topK, selected, allSkills.size());
             return result;
         } catch (Exception e) {
-            log.error("[SkillEmbeddingIndex] 检索失败，降级为全量: {}", e.getMessage());
-            return allSkills;
+            log.warn("[SkillEmbeddingIndex] Embedding 检索失败，降级为词法 Top-K: {}", e.getMessage());
+            return retrieveTopKByLexical(userMessage, allSkills, topK);
         }
     }
 
@@ -131,6 +143,107 @@ public class SkillEmbeddingIndex {
         return indexReady;
     }
 
+    private List<SkillDefinition> retrieveTopKByLexical(String userMessage, List<SkillDefinition> allSkills, int topK) {
+        List<Map.Entry<String, Double>> scores = new ArrayList<>();
+        for (SkillDefinition skill : allSkills) {
+            scores.add(Map.entry(skill.name(), lexicalScore(userMessage, skill)));
+        }
+        scores.sort((a, b) -> Double.compare(b.getValue(), a.getValue()));
+
+        Set<String> selected = new LinkedHashSet<>();
+        for (int i = 0; i < Math.min(topK, scores.size()); i++) {
+            selected.add(scores.get(i).getKey());
+        }
+        // 确保 chitchat 始终在候选中
+        selected.add("chitchat");
+
+        List<SkillDefinition> result = new ArrayList<>();
+        for (SkillDefinition skill : allSkills) {
+            if (selected.contains(skill.name())) {
+                result.add(skill);
+            }
+        }
+
+        log.info("[SkillEmbeddingIndex] Lexical Top-{}: {} (from {} skills)",
+                topK, selected, allSkills.size());
+        return result;
+    }
+
+    private double lexicalScore(String userMessage, SkillDefinition skill) {
+        String query = normalize(userMessage);
+        String skillName = normalize(skill.name());
+        String skillText = normalize(skill.name() + " " + skill.description());
+
+        if (query.isEmpty() || skillText.isEmpty()) {
+            return 0;
+        }
+
+        double score = 0;
+        if (query.contains(skillName)) {
+            score += 2.0;
+        }
+        if (skillText.contains(query)) {
+            score += 3.0;
+        }
+
+        Set<String> queryTokens = tokenize(query);
+        Set<String> skillTokens = tokenize(skillText);
+        if (!queryTokens.isEmpty() && !skillTokens.isEmpty()) {
+            int overlap = 0;
+            for (String t : queryTokens) {
+                if (skillTokens.contains(t)) {
+                    overlap++;
+                }
+            }
+            score += (double) overlap / Math.sqrt(queryTokens.size() * skillTokens.size());
+        }
+
+        Set<String> queryBigrams = toBigrams(query);
+        Set<String> skillBigrams = toBigrams(skillText);
+        if (!queryBigrams.isEmpty() && !skillBigrams.isEmpty()) {
+            int inter = 0;
+            for (String b : queryBigrams) {
+                if (skillBigrams.contains(b)) {
+                    inter++;
+                }
+            }
+            int union = queryBigrams.size() + skillBigrams.size() - inter;
+            if (union > 0) {
+                score += (double) inter / union;
+            }
+        }
+        return score;
+    }
+
+    private String normalize(String text) {
+        if (text == null) {
+            return "";
+        }
+        return text.toLowerCase(Locale.ROOT).trim();
+    }
+
+    private Set<String> tokenize(String text) {
+        Set<String> tokens = new LinkedHashSet<>();
+        for (String token : text.split("[^\\p{IsHan}\\p{Alnum}]+")) {
+            if (!token.isBlank()) {
+                tokens.add(token);
+            }
+        }
+        return tokens;
+    }
+
+    private Set<String> toBigrams(String text) {
+        String normalized = text.replaceAll("\\s+", "");
+        Set<String> grams = new LinkedHashSet<>();
+        if (normalized.length() < 2) {
+            return grams;
+        }
+        for (int i = 0; i < normalized.length() - 1; i++) {
+            grams.add(normalized.substring(i, i + 2));
+        }
+        return grams;
+    }
+
     private double cosineSimilarity(float[] a, float[] b) {
         if (a.length != b.length) return 0;
         double dotProduct = 0, normA = 0, normB = 0;
@@ -142,4 +255,5 @@ public class SkillEmbeddingIndex {
         double denominator = Math.sqrt(normA) * Math.sqrt(normB);
         return denominator == 0 ? 0 : dotProduct / denominator;
     }
+
 }

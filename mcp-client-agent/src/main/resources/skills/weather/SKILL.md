@@ -15,9 +15,13 @@ allowed-tools: getWeather,getWeatherForecast
 - 从用户消息中识别城市名称
 - 如果用户没有指定城市，**直接回复追问用户想查哪个城市**，不要猜测或使用占位符调用工具
 - 用户问**当前/今天/实时**天气 → 调用 `getWeather`
-- 用户问**明天/后天/未来几天**天气 → 调用 `getWeatherForecast`
+- 用户问**今天预报** → 调用 `getWeatherForecast(city, dayOffset=0)`
+- 用户问**明天**天气 → 调用 `getWeatherForecast(city, dayOffset=1)`
+- 用户问**后天**天气 → 调用 `getWeatherForecast(city, dayOffset=2)`
+- 用户问**未来几天**但未指定具体哪天 → 优先调用 `getWeatherForecast(city, dayOffset=1)`，并在回复中补充今日/后天参考
 - 如果用户只说"天气"没指定时间，默认调用 `getWeather` 查实时天气
 - 如果用户同时需要多个城市，分别调用工具查询每个城市
+- 生成步骤时必须显式写出 dayOffset 参数值，禁止省略
 
 ## 回复要求
 - 使用中文回复

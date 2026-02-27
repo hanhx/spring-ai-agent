@@ -54,17 +54,22 @@ public class WeatherTools {
     public String getWeather(
             @ToolParam(description = "城市名称，如 Beijing、上海、Tokyo") String city) {
 
-        return queryAliyunWeather(city, false);
+        return queryAliyunWeather(city, false, 0);
     }
 
-    @Tool(description = "查询指定城市未来3天的天气预报，包括每天的最高温、最低温、天气描述、降水概率等。支持中英文城市名，如 Beijing、上海、Tokyo。适用于用户询问明天、后天或未来几天天气的场景。")
+    @Tool(description = "查询指定城市的天气预报。dayOffset=0 表示今天，1 表示明天（默认），2 表示后天。支持中英文城市名，如 Beijing、上海、Tokyo。")
     public String getWeatherForecast(
-            @ToolParam(description = "城市名称，如 Beijing、上海、Tokyo") String city) {
+            @ToolParam(description = "城市名称，如 Beijing、上海、Tokyo") String city,
+            @ToolParam(description = "预报天偏移：0=今天，1=明天（默认），2=后天。可为空") Integer dayOffset) {
 
-        return queryAliyunWeather(city, true);
+        int resolvedDayOffset = dayOffset == null ? 1 : dayOffset;
+        if (resolvedDayOffset < 0 || resolvedDayOffset > 2) {
+            return "dayOffset 参数非法，请使用 0(今天)、1(明天) 或 2(后天)。";
+        }
+        return queryAliyunWeather(city, true, resolvedDayOffset);
     }
 
-    private String queryAliyunWeather(String city, boolean forecast) {
+    private String queryAliyunWeather(String city, boolean forecast, int dayOffset) {
         if (city == null || city.isBlank()) {
             return "请提供要查询的城市名称。";
         }
@@ -73,7 +78,7 @@ public class WeatherTools {
             return "天气服务未配置 AppCode，请设置环境变量 WEATHER_API_APPCODE。";
         }
 
-        log.info("[WeatherTools] Query aliyun weather, city={}, forecast={}", city, forecast);
+        log.info("[WeatherTools] Query aliyun weather, city={}, forecast={}, dayOffset={}", city, forecast, dayOffset);
 
         Map<String, String> querys = new LinkedHashMap<>();
         querys.put("area", city.trim());
@@ -86,9 +91,9 @@ public class WeatherTools {
                 return "无法获取「" + city + "」天气信息，API 状态码: " + apiResponse.statusCode()
                         + "\n错误详情: " + truncate(apiResponse.body(), 400);
             }
-            return formatAliyunResponse(city, apiResponse.body(), forecast);
+            return formatAliyunResponse(city, apiResponse.body(), forecast, dayOffset);
         } catch (Exception e) {
-            log.error("[WeatherTools] Aliyun weather query failed, city={}, forecast={}", city, forecast, e);
+            log.error("[WeatherTools] Aliyun weather query failed, city={}, forecast={}, dayOffset={}", city, forecast, dayOffset, e);
             return "查询「" + city + "」天气时出错: " + e.getMessage();
         }
     }
@@ -142,7 +147,7 @@ public class WeatherTools {
         }
     }
 
-    private String formatAliyunResponse(String city, String json, boolean forecast) {
+    private String formatAliyunResponse(String city, String json, boolean forecast, int dayOffset) {
         if (json == null || json.isBlank()) {
             return "城市: " + city + "\n天气服务返回空结果。";
         }
@@ -162,23 +167,10 @@ public class WeatherTools {
             }
 
             JsonNode cityInfo = bodyNode.path("cityInfo");
-            JsonNode dayNode = bodyNode.path("f1");
+            JsonNode todayNode = bodyNode.path("f1");
 
             String cityName = textOr(cityInfo.path("c5"), city);
             String province = textOr(cityInfo.path("c7"), null);
-            String date = textOr(dayNode.path("day"), textOr(bodyNode.path("date"), null));
-            String dayWeather = textOr(dayNode.path("day_weather"), null);
-            String nightWeather = textOr(dayNode.path("night_weather"), null);
-            String dayTemp = textOr(dayNode.path("day_air_temperature"), null);
-            String nightTemp = textOr(dayNode.path("night_air_temperature"), null);
-            String dayWindDir = textOr(dayNode.path("day_wind_direction"), null);
-            String dayWindPower = textOr(dayNode.path("day_wind_power"), null);
-            String humidity = textOr(dayNode.path("sd"), null);
-            String pressure = textOr(dayNode.path("air_press"), null);
-            String rainProb = textOr(dayNode.path("jiangshui"), null);
-            String uv = textOr(dayNode.path("ziwaixian"), null);
-            String clothes = textOr(dayNode.path("index").path("clothes").path("title"), null);
-            String comfort = textOr(dayNode.path("index").path("comfort").path("title"), null);
 
             StringBuilder result = new StringBuilder();
             result.append("城市: ").append(cityName);
@@ -187,38 +179,27 @@ public class WeatherTools {
             }
             result.append("\n");
             result.append("数据源: 阿里云天气 API\n");
-            if (date != null) {
-                result.append("日期: ").append(date).append("\n");
-            }
 
-            if (dayWeather != null || nightWeather != null) {
-                result.append("天气: ").append(dayWeather != null ? dayWeather : "-")
-                        .append(" / 夜间 ").append(nightWeather != null ? nightWeather : "-")
-                        .append("\n");
-            }
-            if (dayTemp != null || nightTemp != null) {
-                result.append("气温: ").append(nightTemp != null ? nightTemp : "?")
-                        .append("~")
-                        .append(dayTemp != null ? dayTemp : "?")
-                        .append("°C\n");
-            }
-            if (dayWindDir != null || dayWindPower != null) {
-                result.append("风况: ")
-                        .append(dayWindDir != null ? dayWindDir : "")
-                        .append(dayWindPower != null ? " " + dayWindPower : "")
-                        .append("\n");
-            }
-            if (humidity != null) result.append("湿度: ").append(humidity).append("\n");
-            if (pressure != null) result.append("气压: ").append(pressure).append("\n");
-            if (rainProb != null) result.append("降水概率: ").append(rainProb).append("\n");
-            if (uv != null) result.append("紫外线: ").append(uv).append("\n");
-            if (clothes != null) result.append("穿衣建议: ").append(clothes).append("\n");
-            if (comfort != null) result.append("体感舒适度: ").append(comfort).append("\n");
+            if (!forecast) {
+                appendDailyWeather(result, "今日", todayNode, true);
+            } else {
+                String targetLabel = dayOffset == 0 ? "今日" : dayOffset == 1 ? "明天" : "后天";
+                JsonNode targetNode = dayOffset == 0 ? bodyNode.path("f1") : dayOffset == 1 ? bodyNode.path("f2") : bodyNode.path("f3");
 
-            if (forecast) {
-                List<String> lines = extract3HourForecastLines(dayNode.path("3hourForcast"), 4);
+                result.append("目标日期预报:\n");
+                appendDailyWeather(result, targetLabel, targetNode, false);
+
+                result.append("\n未来三天参考:\n");
+                appendDailyWeather(result, "今日", bodyNode.path("f1"), false);
+                appendDailyWeather(result, "明天", bodyNode.path("f2"), false);
+                appendDailyWeather(result, "后天", bodyNode.path("f3"), false);
+
+                List<String> lines = extract3HourForecastLines(targetNode.path("3hourForcast"), 4);
+                if (lines.isEmpty()) {
+                    lines = extract3HourForecastLines(bodyNode.path("f1").path("3hourForcast"), 4);
+                }
                 if (!lines.isEmpty()) {
-                    result.append("\n未来分时预报:\n");
+                    result.append("\n").append(targetLabel).append("分时预报:\n");
                     for (String line : lines) {
                         result.append("- ").append(line).append("\n");
                     }
@@ -232,6 +213,63 @@ public class WeatherTools {
         } catch (Exception e) {
             log.warn("[WeatherTools] Parse aliyun weather response failed: {}", e.getMessage());
             return "城市: " + city + "\n原始天气数据: " + truncate(json, 500);
+        }
+    }
+
+    private void appendDailyWeather(StringBuilder result, String label, JsonNode dayNode, boolean includeLifeIndex) {
+        if (dayNode == null || dayNode.isMissingNode() || dayNode.isNull()) {
+            return;
+        }
+
+        String date = textOr(dayNode.path("day"), null);
+        String dayWeather = textOr(dayNode.path("day_weather"), null);
+        String nightWeather = textOr(dayNode.path("night_weather"), null);
+        String dayTemp = textOr(dayNode.path("day_air_temperature"), null);
+        String nightTemp = textOr(dayNode.path("night_air_temperature"), null);
+        String dayWindDir = textOr(dayNode.path("day_wind_direction"), null);
+        String dayWindPower = textOr(dayNode.path("day_wind_power"), null);
+        String humidity = textOr(dayNode.path("sd"), null);
+        String pressure = textOr(dayNode.path("air_press"), null);
+        String rainProb = textOr(dayNode.path("jiangshui"), null);
+        String uv = textOr(dayNode.path("ziwaixian"), null);
+
+        result.append("- ").append(label);
+        if (date != null) {
+            result.append("(").append(date).append(")");
+        }
+        result.append(": ");
+
+        List<String> parts = new ArrayList<>();
+        if (dayWeather != null || nightWeather != null) {
+            parts.add("天气 " + (dayWeather != null ? dayWeather : "-") + " / 夜间 " + (nightWeather != null ? nightWeather : "-"));
+        }
+        if (dayTemp != null || nightTemp != null) {
+            parts.add("气温 " + (nightTemp != null ? nightTemp : "?") + "~" + (dayTemp != null ? dayTemp : "?") + "°C");
+        }
+        if (dayWindDir != null || dayWindPower != null) {
+            parts.add("风况 " + (dayWindDir != null ? dayWindDir : "") + (dayWindPower != null ? " " + dayWindPower : ""));
+        }
+        if (humidity != null) parts.add("湿度 " + humidity);
+        if (pressure != null) parts.add("气压 " + pressure);
+        if (rainProb != null) parts.add("降水概率 " + rainProb);
+        if (uv != null) parts.add("紫外线 " + uv);
+
+        if (parts.isEmpty()) {
+            result.append("暂无详细数据");
+        } else {
+            result.append(String.join("，", parts));
+        }
+        result.append("\n");
+
+        if (includeLifeIndex) {
+            String clothes = textOr(dayNode.path("index").path("clothes").path("title"), null);
+            String comfort = textOr(dayNode.path("index").path("comfort").path("title"), null);
+            if (clothes != null) {
+                result.append("穿衣建议: ").append(clothes).append("\n");
+            }
+            if (comfort != null) {
+                result.append("体感舒适度: ").append(comfort).append("\n");
+            }
         }
     }
 

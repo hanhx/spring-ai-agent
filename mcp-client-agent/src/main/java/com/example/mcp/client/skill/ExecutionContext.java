@@ -92,7 +92,6 @@ public class ExecutionContext {
     public void resetForReplan(List<String> newSteps) {
         addPlan(newSteps);
         stepIndex = 0;
-        completedSteps.clear();
     }
 
     public int incrementAskUser() { return ++askUserCount; }

@@ -219,7 +219,7 @@ public class SkillRouter {
         }
 
         if (intents.isEmpty()) {
-            log.warn("[SkillRouter] 无法解析意图，LLM 返回: '{}', 使用兜底", llmOutput);
+            log.warn("[SkillRouter] 无法解析意图，LLM 返回: '{}'", llmOutput);
             intents.add(new SkillIntent("chitchat", originalMessage));
         }
 

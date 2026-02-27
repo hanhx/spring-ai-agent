@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Spring AI Agent</title>
+    <title>AI Agent</title>
+    <link rel="icon" type="image/jpeg" href="/icon/icon93.jpg">
     <script src="/marked.min.js"></script>
     <style>
         :root {
@@ -75,7 +76,8 @@
             flex-direction: column;
             flex-shrink: 0;
             border-right: 1px solid var(--border);
-            transition: transform 0.3s;
+            transition: transform 0.3s, width 0.25s ease, border-color 0.25s ease;
+            overflow: hidden;
         }
         .sidebar-header {
             padding: 12px;
@@ -169,9 +171,16 @@
             cursor: pointer;
             padding: 6px;
             border-radius: 6px;
-            display: none;
+            display: block;
         }
         .sidebar-toggle:hover { background: var(--bg-hover); }
+
+        @media (min-width: 769px) {
+            .sidebar.collapsed {
+                width: 0;
+                border-right-color: transparent;
+            }
+        }
 
         /* Theme toggle */
         .theme-toggle {
@@ -585,7 +594,7 @@
         </button>
     </div>
     <div class="sidebar-conversations" id="convList"></div>
-    <div class="sidebar-footer">Spring AI Agent &middot; SKILL.md + MCP</div>
+    <div class="sidebar-footer">AI Agent &middot; SKILL.md + MCP</div>
 </aside>
 
 <!-- Main -->
@@ -596,7 +605,7 @@
         </button>
         <div class="model-label">
             <span class="status-dot"></span>
-            Spring AI Agent
+            AI Agent
         </div>
         <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="切换主题">
             <span id="themeIcon">&#9790;</span>
@@ -607,7 +616,7 @@
         <div class="chat-container" id="chatContainer">
             <div class="welcome" id="welcome">
                 <div class="welcome-icon">AI</div>
-                <h2>Spring AI Agent</h2>
+                <h2>AI Agent</h2>
                 <p>SKILL.md 驱动的智能助手，支持天气查询、订单管理、数据分析等多种技能</p>
             </div>
             <div class="quick-grid" id="quickGrid">
@@ -676,6 +685,28 @@
     }
     initTheme();
 
+    function initSidebarState() {
+        const sidebar = document.getElementById('sidebar');
+        if (!sidebar) return;
+
+        const applyDesktopState = () => {
+            if (window.innerWidth <= 768) {
+                sidebar.classList.remove('collapsed');
+            } else {
+                sidebar.classList.remove('open');
+                if (localStorage.getItem('sidebarCollapsed') === '1') {
+                    sidebar.classList.add('collapsed');
+                } else {
+                    sidebar.classList.remove('collapsed');
+                }
+            }
+        };
+
+        applyDesktopState();
+        window.addEventListener('resize', applyDesktopState);
+    }
+    initSidebarState();
+
     // ===== State =====
     let conversations = []; // { id, title, messages: [] }
     let currentConvId = null;
@@ -729,7 +760,7 @@
             container.innerHTML = `
                 <div class="welcome" id="welcome">
                     <div class="welcome-icon">AI</div>
-                    <h2>Spring AI Agent</h2>
+                    <h2>AI Agent</h2>
                     <p>SKILL.md 驱动的智能助手，支持天气查询、订单管理、数据分析等多种技能</p>
                 </div>
                 <div class="quick-grid" id="quickGrid">
@@ -769,7 +800,16 @@
 
     // ===== Sidebar toggle (mobile) =====
     function toggleSidebar() {
-        document.getElementById('sidebar').classList.toggle('open');
+        const sidebar = document.getElementById('sidebar');
+        if (!sidebar) return;
+
+        if (window.innerWidth <= 768) {
+            sidebar.classList.toggle('open');
+            return;
+        }
+
+        sidebar.classList.toggle('collapsed');
+        localStorage.setItem('sidebarCollapsed', sidebar.classList.contains('collapsed') ? '1' : '0');
     }
 
     // ===== Input =====

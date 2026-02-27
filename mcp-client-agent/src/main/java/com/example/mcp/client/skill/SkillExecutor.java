@@ -5,10 +5,13 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.memory.ChatMemory;
+import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.tool.definition.ToolDefinition;
+import org.springframework.ai.tool.metadata.ToolMetadata;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -17,6 +20,7 @@ import reactor.core.scheduler.Schedulers;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 /**
@@ -41,6 +45,7 @@ public class SkillExecutor {
     private static final int MAX_REPLAN_ROUNDS = 3;
     private static final int MAX_ASK_USER_ROUNDS = 4;
     private static final int MAX_TOTAL_EXECUTED_STEPS = 20;
+    private static final int MAX_SAME_STEP_EXECUTIONS = 2;
     private static final String ASK_USER_PREFIX = "追问用户";
 
     private final ChatClient.Builder chatClientBuilder;
@@ -88,6 +93,29 @@ public class SkillExecutor {
             chatMemory.add(conversationId, new AssistantMessage(errorMsg));
             return new SkillResponse(skill.name(), errorMsg);
         }
+    }
+
+    private DirectToolStep parseDirectToolStep(String stepDesc, ToolCallback[] cachedTools) {
+        if (stepDesc == null || stepDesc.isBlank() || cachedTools == null || cachedTools.length == 0) {
+            return null;
+        }
+        int colonIdx = stepDesc.indexOf(':');
+        if (colonIdx <= 0 || colonIdx >= stepDesc.length() - 1) {
+            return null;
+        }
+
+        String toolMarker = stepDesc.substring(0, colonIdx).trim();
+        String toolInput = stepDesc.substring(colonIdx + 1).trim();
+        if (!toolInput.startsWith("{")) {
+            return null;
+        }
+
+        ToolCallback[] matched = selectToolsForStep(toolMarker, cachedTools);
+        if (matched == null || matched.length != 1) {
+            return null;
+        }
+
+        return new DirectToolStep(matched[0], toolInput);
     }
 
     /**
@@ -180,6 +208,15 @@ public class SkillExecutor {
         int displayStep = ctx.currentStepDisplay();
         int totalSteps = ctx.totalSteps();
 
+        int sameStepExecuted = countStepExecutions(ctx, currentStep);
+        if (sameStepExecuted >= MAX_SAME_STEP_EXECUTIONS) {
+            String msg = "检测到同一步骤重复执行，已中止以避免重复调用下游服务。";
+            log.warn("[SkillExecutor] 同一步骤重复执行超限({})，step='{}'，conversationId={}",
+                    MAX_SAME_STEP_EXECUTIONS, currentStep, ctx.conversationId());
+            chatMemory.add(ctx.conversationId(), new AssistantMessage(msg));
+            return Flux.just(PlanActionEvent.error(msg), PlanActionEvent.done());
+        }
+
         // 追问检测 + 上限防御
         if (isAskUserStep(currentStep)) {
             return handleAskUser(ctx, currentStep);
@@ -250,37 +287,80 @@ public class SkillExecutor {
         String toolsInfo = toolResolver.formatToolSignatures(ctx.cachedTools());
 
         String prompt = """
-                你是一个任务规划器。根据用户问题、可用工具和已完成步骤，生成接下来的执行计划。
-                
-                规则：
-                - 每行一个步骤，不要编号，不要多余内容
-                - 步骤要具体、可执行，明确说明要调用哪个工具和参数
-                - 如果不需要工具，直接写"回复用户"
-                - 最后一步应该是"整理结果并回复用户"
-                - **重要**：仔细检查每个工具的必填参数（required），如果用户消息中缺少必填参数的值，第一步应该是"追问用户"而不是用占位符调用工具
-                - **追问格式**：追问步骤必须写成"追问用户：具体问题内容"，例如"追问用户：请问您想查询哪个城市的天气？"，不要只写"追问用户"
-                - **禁止反复追问**：只有在缺少必填参数（如城市名、订单号）时才追问。如果用户意图和参数都明确但工具能力有限（如用户问"明天天气"但工具只能查实时天气），应直接用现有工具执行，并在回复中说明限制，绝不要追问
-                - **能力不足时**：如果工具无法完全满足用户需求，先尽力用现有工具获取最接近的结果，再在回复中补充说明
-                
+                你是一个任务规划器。根据用户问题、可用工具和已完成步骤，生成「机器可执行」计划。
+
+                严格输出规则：
+                1) 每行一个步骤，不要编号，不要解释，不要 markdown
+                2) 工具步骤必须是：<工具名>: <JSON参数>
+                   例如：JavaSDKMCPClient_getWeatherForecast: {"city":"上海","dayOffset":1}
+                3) 若缺少必填参数，必须输出：追问用户：<具体问题>
+                4) 最后一步必须是：整理结果并回复用户
+                5) 禁止输出“我认为/建议/说明”这类描述性文字
+                6) 不能编造不存在的工具名
+
                 可用工具（含参数签名）:
                 %s
                 用户问题: %s
                 已完成步骤:
                 %s
-                
-                请输出接下来要执行的步骤（每行一个）：
+
+                请直接输出步骤：
                 """.formatted(toolsInfo, ctx.enrichedMessage(), completedInfo);
 
         String result = chatClientBuilder.build().prompt().user(prompt).call().content();
         return Arrays.stream(result.split("\n"))
-                .map(String::trim)
+                .map(this::normalizePlannerLine)
                 .filter(s -> !s.isEmpty())
-                .filter(s -> !s.startsWith("#"))
+                .filter(this::isValidPlannedStep)
                 .toList();
+    }
+
+    private String normalizePlannerLine(String line) {
+        if (line == null) {
+            return "";
+        }
+        String s = line.trim();
+        if (s.isEmpty() || s.startsWith("#") || s.startsWith("```") || "[".equals(s) || "]".equals(s)) {
+            return "";
+        }
+        s = s.replaceFirst("^[-*\\d.)\\s]+", "").trim();
+        if ((s.startsWith("\"") && s.endsWith("\"")) || (s.startsWith("'") && s.endsWith("'"))) {
+            s = s.substring(1, s.length() - 1).trim();
+        }
+        return s;
+    }
+
+    private boolean isValidPlannedStep(String step) {
+        if (step == null || step.isBlank()) {
+            return false;
+        }
+        if ("整理结果并回复用户".equals(step) || "回复用户".equals(step)) {
+            return true;
+        }
+        if (step.startsWith("追问用户")) {
+            return true;
+        }
+        int idx = step.indexOf(':');
+        if (idx <= 0 || idx >= step.length() - 1) {
+            return false;
+        }
+        String args = step.substring(idx + 1).trim();
+        return args.startsWith("{") && args.endsWith("}");
     }
 
     /** StepExecutor —— 执行单个步骤（带工具调用） */
     private String invokeStepExecutor(ExecutionContext ctx, String stepDesc) {
+        DirectToolStep directToolStep = parseDirectToolStep(stepDesc, ctx.cachedTools());
+        if (directToolStep != null) {
+            try {
+                String toolResult = directToolStep.tool().call(directToolStep.toolInputJson());
+                return toolResult != null ? toolResult : "(无结果)";
+            } catch (Exception e) {
+                log.warn("[StepExecutor] 直连工具执行失败: {} - {}", stepDesc, e.getMessage());
+                return "执行失败: " + e.getMessage();
+            }
+        }
+
         String historyInfo = ctx.completedSteps().isEmpty() ? "" :
                 ctx.completedSteps().stream()
                         .map(s -> "步骤「" + s.step() + "」结果: " + s.result())
@@ -293,17 +373,25 @@ public class SkillExecutor {
                 用户原始问题: %s
                 %s
                 
-                请执行这个步骤。如果需要调用工具，请调用。只返回这一步的执行结果，不要返回最终回复。
+                请严格执行这个步骤。
+                - 如果需要调用工具，最多调用 1 次
+                - 调用后直接输出这一步结果，不要继续调用其他工具
+                - 只返回这一步的执行结果，不要返回最终回复
+                - 不要评价工具是否存在、不要推断能力边界、不要编造失败原因
+                - 如果工具调用成功，请尽量原样返回工具结果文本
                 """.formatted(
                 ctx.cachedPrompt(), stepDesc, ctx.enrichedMessage(),
                 historyInfo.isEmpty() ? "" : "之前步骤的结果:\n" + historyInfo
         );
 
+        ToolCallback[] scopedTools = selectToolsForStep(stepDesc, ctx.cachedTools());
+        ToolCallback[] guardedTools = withSingleCallGuard(scopedTools, stepDesc);
+
         try {
             String result = chatClientBuilder.build()
                     .prompt()
                     .user(stepPrompt)
-                    .toolCallbacks(ctx.cachedTools())
+                    .toolCallbacks(guardedTools)
                     .call()
                     .content();
             return result != null ? result : "(无结果)";
@@ -311,6 +399,118 @@ public class SkillExecutor {
             log.warn("[StepExecutor] 步骤执行失败: {} - {}", stepDesc, e.getMessage());
             return "执行失败: " + e.getMessage();
         }
+    }
+
+    private ToolCallback[] selectToolsForStep(String stepDesc, ToolCallback[] cachedTools) {
+        if (cachedTools == null || cachedTools.length <= 1 || stepDesc == null || stepDesc.isBlank()) {
+            return cachedTools;
+        }
+
+        String normalizedStep = stepDesc.trim();
+        int colonIdx = normalizedStep.indexOf(':');
+        String stepToolName = colonIdx > 0 ? normalizedStep.substring(0, colonIdx).trim() : normalizedStep;
+
+        // 1) 优先精确匹配完整工具名
+        for (ToolCallback tool : cachedTools) {
+            String toolName = tool.getToolDefinition().name();
+            if (stepToolName.equals(toolName)) {
+                return new ToolCallback[]{tool};
+            }
+        }
+
+        // 2) 匹配短名称（如 getWeatherForecast）
+        for (ToolCallback tool : cachedTools) {
+            String toolName = tool.getToolDefinition().name();
+            if (stepToolName.equals(extractShortToolName(toolName)) || toolName.endsWith("_" + stepToolName)) {
+                return new ToolCallback[]{tool};
+            }
+        }
+
+        // 3) 兜底：按“最长命中”选择，避免 getWeatherForecast 被 getWeather 误命中
+        ToolCallback best = null;
+        int bestLen = -1;
+        for (ToolCallback tool : cachedTools) {
+            String toolName = tool.getToolDefinition().name();
+            String shortName = extractShortToolName(toolName);
+            boolean hit = normalizedStep.contains(toolName) || normalizedStep.contains(shortName);
+            if (hit && toolName.length() > bestLen) {
+                best = tool;
+                bestLen = toolName.length();
+            }
+        }
+        if (best != null) {
+            return new ToolCallback[]{best};
+        }
+
+        log.warn("[StepExecutor] 步骤未匹配到具体工具，禁用工具调用避免重复下游请求。step={}", stepDesc);
+        return new ToolCallback[0];
+    }
+
+    private String extractShortToolName(String fullToolName) {
+        if (fullToolName == null || fullToolName.isBlank()) {
+            return "";
+        }
+        int idx = fullToolName.lastIndexOf('_');
+        return idx >= 0 && idx < fullToolName.length() - 1 ? fullToolName.substring(idx + 1) : fullToolName;
+    }
+
+    private record DirectToolStep(ToolCallback tool, String toolInputJson) {
+    }
+
+    private ToolCallback[] withSingleCallGuard(ToolCallback[] tools, String stepDesc) {
+        if (tools == null || tools.length == 0) {
+            return tools;
+        }
+        ToolCallback[] wrapped = new ToolCallback[tools.length];
+        for (int i = 0; i < tools.length; i++) {
+            ToolCallback delegate = tools[i];
+            AtomicInteger callCount = new AtomicInteger(0);
+            wrapped[i] = new ToolCallback() {
+                @Override
+                public ToolDefinition getToolDefinition() {
+                    return delegate.getToolDefinition();
+                }
+
+                @Override
+                public ToolMetadata getToolMetadata() {
+                    return delegate.getToolMetadata();
+                }
+
+                @Override
+                public String call(String toolInput) {
+                    return guardedCall(toolInput, null);
+                }
+
+                @Override
+                public String call(String toolInput, ToolContext toolContext) {
+                    return guardedCall(toolInput, toolContext);
+                }
+
+                private String guardedCall(String toolInput, ToolContext toolContext) {
+                    int count = callCount.incrementAndGet();
+                    if (count > 1) {
+                        log.warn("[StepExecutor] 阻断同一步骤内重复工具调用，step='{}', tool='{}', callCount={}",
+                                stepDesc, delegate.getToolDefinition().name(), count);
+                        return "执行失败: 同一步骤只允许一次工具调用，请继续下一步骤。";
+                    }
+                    return toolContext == null ? delegate.call(toolInput) : delegate.call(toolInput, toolContext);
+                }
+            };
+        }
+        return wrapped;
+    }
+
+    private int countStepExecutions(ExecutionContext ctx, String currentStep) {
+        if (currentStep == null || currentStep.isBlank()) {
+            return 0;
+        }
+        int count = 0;
+        for (ExecutionContext.StepResult done : ctx.completedSteps()) {
+            if (currentStep.equals(done.step())) {
+                count++;
+            }
+        }
+        return count;
     }
 
     /** Observer —— 观察步骤结果，判断是否需要 RePlan */
@@ -448,12 +648,11 @@ public class SkillExecutor {
             return true;
         }
         String text = stepResult.toLowerCase();
-        return text.contains("执行失败")
-                || text.contains("error")
+        return text.startsWith("执行失败:")
                 || text.contains("exception")
-                || text.contains("未配置")
-                || text.contains("出错")
-                || text.contains("无法获取");
+                || text.contains("readtimeoutexception")
+                || text.contains("tool execution failed")
+                || text.contains("\"iserror\":true");
     }
 
     /**
