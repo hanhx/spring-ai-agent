@@ -20,6 +20,8 @@ public class ExecutionContext {
     private final String conversationId;
     private final String userMessage;
     private final String enrichedMessage;
+    private final String userProfileContext;
+    private final String userId;
 
     /** 缓存的 Skill prompt 和工具（预加载一次，避免重复 IO） */
     private String cachedPrompt;
@@ -35,11 +37,19 @@ public class ExecutionContext {
     private boolean askUserTerminated = false;
 
     public ExecutionContext(SkillDefinition skill, String conversationId,
-                           String userMessage, String enrichedMessage) {
+                           String userMessage, String enrichedMessage,
+                           String userProfileContext, String userId) {
         this.skill = skill;
         this.conversationId = conversationId;
         this.userMessage = userMessage;
         this.enrichedMessage = enrichedMessage;
+        this.userProfileContext = userProfileContext;
+        this.userId = userId;
+    }
+
+    public ExecutionContext(SkillDefinition skill, String conversationId,
+                           String userMessage, String enrichedMessage) {
+        this(skill, conversationId, userMessage, enrichedMessage, "", "anonymous");
     }
 
     // ===== Getters =====
@@ -48,6 +58,8 @@ public class ExecutionContext {
     public String conversationId() { return conversationId; }
     public String userMessage() { return userMessage; }
     public String enrichedMessage() { return enrichedMessage; }
+    public String userProfileContext() { return userProfileContext; }
+    public String userId() { return userId; }
     public String cachedPrompt() { return cachedPrompt; }
     public ToolCallback[] cachedTools() { return cachedTools; }
     public List<StepResult> completedSteps() { return completedSteps; }

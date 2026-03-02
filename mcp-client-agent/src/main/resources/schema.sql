@@ -28,3 +28,15 @@ CREATE TABLE IF NOT EXISTS skill_registry (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uk_skill_registry_name (name)
 );
+
+CREATE TABLE IF NOT EXISTS user_profile (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id VARCHAR(64) NOT NULL,
+    profile_key VARCHAR(128) NOT NULL,
+    profile_value TEXT,
+    source_message TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_user_profile_key (user_id, profile_key),
+    INDEX idx_user_profile_user (user_id)
+);

@@ -1,5 +1,6 @@
 package com.hhx.agi.application.agent;
 
+import com.hhx.agi.application.service.UserProfileService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -52,14 +53,17 @@ public class SkillExecutor {
     private final ToolResolver toolResolver;
     private final SkillLoader skillLoader;
     private final ChatMemory chatMemory;
+    private final UserProfileService userProfileService;
 
     @Autowired
     public SkillExecutor(ChatClient.Builder chatClientBuilder, ToolResolver toolResolver,
-                         SkillLoader skillLoader, ChatMemory chatMemory) {
+                         SkillLoader skillLoader, ChatMemory chatMemory,
+                         UserProfileService userProfileService) {
         this.chatClientBuilder = chatClientBuilder;
         this.toolResolver = toolResolver;
         this.skillLoader = skillLoader;
         this.chatMemory = chatMemory;
+        this.userProfileService = userProfileService;
     }
 
     // ==================== 公开 API ====================
@@ -67,13 +71,18 @@ public class SkillExecutor {
     /**
      * 简单执行模式 —— 直接调用 LLM + 工具，不走 Plan-and-Execute
      */
-    public SkillResponse execute(SkillDefinition skill, String conversationId, String userMessage) {
+    public SkillResponse execute(SkillDefinition skill, String conversationId, String userMessage, String userId) {
         log.info("[SkillExecutor] 执行 Skill [{}]，用户消息: {}", skill.name(), userMessage);
         chatMemory.add(conversationId, new UserMessage(userMessage));
 
         try {
             ToolCallback[] skillTools = toolResolver.resolveTools(skill);
             String prompt = skillLoader.loadPrompt(skill);
+            // 注入用户画像
+            String userProfileContext = userProfileService.getUserProfileContext(userId);
+            if (!userProfileContext.isEmpty()) {
+                prompt = prompt + userProfileContext;
+            }
             String enrichedUserMessage = enrichWithHistory(conversationId, userMessage);
 
             String content = chatClientBuilder.build()
@@ -121,12 +130,13 @@ public class SkillExecutor {
     /**
      * Plan-and-Execute 流式模式 —— Plan → Execute → Observe → (RePlan?) → Final Answer
      */
-    public Flux<PlanActionEvent> planAndExecute(SkillDefinition skill, String conversationId, String userMessage) {
+    public Flux<PlanActionEvent> planAndExecute(SkillDefinition skill, String conversationId, String userMessage, String userId) {
         log.info("[SkillExecutor] Plan&Execute Skill [{}]，用户消息: {}", skill.name(), userMessage);
         chatMemory.add(conversationId, new UserMessage(userMessage));
 
         String enrichedMessage = enrichWithHistory(conversationId, userMessage);
-        ExecutionContext ctx = new ExecutionContext(skill, conversationId, userMessage, enrichedMessage);
+        String userProfileContext = userProfileService.getUserProfileContext(userId);
+        ExecutionContext ctx = new ExecutionContext(skill, conversationId, userMessage, enrichedMessage, userProfileContext, userId);
 
         Mono<Void> preload = preloadPhase(ctx);
         Flux<PlanActionEvent> planPhase = planPhase(ctx);
@@ -145,7 +155,13 @@ public class SkillExecutor {
     /** Phase 0: 预加载 prompt 和 tools（只加载一次） */
     private Mono<Void> preloadPhase(ExecutionContext ctx) {
         return Mono.fromRunnable(() -> {
-            ctx.setCachedPrompt(skillLoader.loadPrompt(ctx.skill()));
+            String prompt = skillLoader.loadPrompt(ctx.skill());
+            // 注入用户画像
+            String userProfileContext = ctx.userProfileContext();
+            if (userProfileContext != null && !userProfileContext.isEmpty()) {
+                prompt = prompt + userProfileContext;
+            }
+            ctx.setCachedPrompt(prompt);
             ctx.setCachedTools(toolResolver.resolveTools(ctx.skill()));
             log.info("[SkillExecutor] 预加载 Skill [{}] prompt({}字) + {} 个工具",
                     ctx.skill().name(), ctx.cachedPrompt().length(), ctx.cachedTools().length);

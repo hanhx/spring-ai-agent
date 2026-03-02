@@ -1,9 +1,11 @@
 package com.hhx.agi.facade.rest;
 
-import com.hhx.agi.infra.config.McpConnectionManager;
 import com.hhx.agi.application.agent.PlanActionEvent;
 import com.hhx.agi.application.agent.SkillResponse;
 import com.hhx.agi.application.agent.SkillRouter;
+import com.hhx.agi.application.service.UserProfileService;
+import com.hhx.agi.facade.request.SaveUserProfileRequest;
+import com.hhx.agi.infra.config.McpConnectionManager;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,21 +33,26 @@ public class AgentController {
 
     private final SkillRouter skillRouter;
     private final McpConnectionManager mcpManager;
+    private final UserProfileService userProfileService;
 
     @Autowired
-    public AgentController(SkillRouter skillRouter, McpConnectionManager mcpManager) {
+    public AgentController(SkillRouter skillRouter, McpConnectionManager mcpManager,
+                          UserProfileService userProfileService) {
         this.skillRouter = skillRouter;
         this.mcpManager = mcpManager;
+        this.userProfileService = userProfileService;
     }
 
     /**
      * 智能对话 —— LLM + MCP 工具自动决策
      */
     @PostMapping("/chat")
-    public Mono<ResponseEntity<ChatResponse>> chat(@Valid @RequestBody ChatRequest request) {
-        log.info("Chat request: conversationId={}, message={}", request.conversationId(), request.message());
+    public Mono<ResponseEntity<ChatResponse>> chat(
+            @Valid @RequestBody ChatRequest request,
+            @RequestHeader(value = "X-User-Id", required = false, defaultValue = "anonymous") String userId) {
+        log.info("Chat request: conversationId={}, message={}, userId={}", request.conversationId(), request.message(), userId);
         return Mono.fromCallable(() -> {
-            SkillResponse response = skillRouter.route(request.conversationId(), request.message());
+            SkillResponse response = skillRouter.route(request.conversationId(), request.message(), userId);
             return ResponseEntity.ok(ChatResponse.from(request.conversationId(), response));
         }).subscribeOn(Schedulers.boundedElastic());
     }
@@ -54,9 +61,11 @@ public class AgentController {
      * 流式对话 —— Plan & Action 模式，Flux SSE 逐个推送事件（实时）
      */
     @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public Flux<PlanActionEvent> chatStream(@Valid @RequestBody ChatRequest request) {
-        log.info("Stream chat request: message={}", request.message());
-        return skillRouter.streamRoute(request.conversationId(), request.message());
+    public Flux<PlanActionEvent> chatStream(
+            @Valid @RequestBody ChatRequest request,
+            @RequestHeader(value = "X-User-Id", required = false, defaultValue = "anonymous") String userId) {
+        log.info("Stream chat request: message={}, userId={}", request.message(), userId);
+        return skillRouter.streamRoute(request.conversationId(), request.message(), userId);
     }
 
     /**
@@ -121,6 +130,25 @@ public class AgentController {
                         "message", "所有 MCP Server 已重连"
                 ));
             }
+        }).subscribeOn(Schedulers.boundedElastic());
+    }
+
+    /**
+     * 保存用户画像（供 H2 测试使用）
+     */
+    @PostMapping("/profile")
+    public Mono<ResponseEntity<Map<String, Object>>> saveProfile(
+            @Valid @RequestBody SaveUserProfileRequest request) {
+        log.info("Save profile: userId={}, key={}, value={}", request.getUserId(), request.getProfileKey(), request.getProfileValue());
+        return Mono.fromCallable(() -> {
+            userProfileService.saveProfile(
+                    request.getUserId(),
+                    request.getProfileKey(),
+                    request.getProfileValue(),
+                    request.getSourceMessage());
+            Map<String, Object> result = new java.util.HashMap<>();
+            result.put("success", true);
+            return ResponseEntity.ok(result);
         }).subscribeOn(Schedulers.boundedElastic());
     }
 }

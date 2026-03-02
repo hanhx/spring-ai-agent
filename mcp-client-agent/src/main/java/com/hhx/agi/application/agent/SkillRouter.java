@@ -70,7 +70,7 @@ public class SkillRouter {
     /**
      * 路由并执行 —— 先识别意图（支持多意图），再分发到对应 Skill
      */
-    public SkillResponse route(String conversationId, String userMessage) {
+    public SkillResponse route(String conversationId, String userMessage, String userId) {
         log.info("[SkillRouter] 收到请求: {}", userMessage);
 
         List<SkillIntent> intents = identifySkills(conversationId, userMessage);
@@ -83,7 +83,7 @@ public class SkillRouter {
             if (skill == null) {
                 return new SkillResponse("router", "抱歉，系统暂时无法处理您的请求。");
             }
-            return executor.execute(skill, conversationId, intent.subTask());
+            return executor.execute(skill, conversationId, intent.subTask(), userId);
         }
 
         // 多意图：串行执行，合并结果
@@ -92,7 +92,7 @@ public class SkillRouter {
             SkillIntent intent = intents.get(i);
             SkillDefinition skill = skillMap.getOrDefault(intent.skillName(), fallbackSkill);
             if (skill == null) continue;
-            SkillResponse resp = executor.execute(skill, conversationId, intent.subTask());
+            SkillResponse resp = executor.execute(skill, conversationId, intent.subTask(), userId);
             combined.append("### 任务 ").append(i + 1).append(": ").append(intent.subTask()).append("\n");
             combined.append(resp.content()).append("\n\n");
         }
@@ -102,7 +102,7 @@ public class SkillRouter {
     /**
      * Plan & Action 流式路由 —— 支持多意图 + 待办意图恢复
      */
-    public Flux<PlanActionEvent> streamRoute(String conversationId, String userMessage) {
+    public Flux<PlanActionEvent> streamRoute(String conversationId, String userMessage, String userId) {
         log.info("[SkillRouter] 流式请求: {}", userMessage);
 
         return Flux.concat(
@@ -131,12 +131,12 @@ public class SkillRouter {
                         }
                         return Flux.concat(
                                 Flux.just(PlanActionEvent.planning("💡 已理解，正在规划执行方案...")),
-                                executor.planAndExecute(skill, conversationId, intent.subTask())
+                                executor.planAndExecute(skill, conversationId, intent.subTask(), userId)
                         );
                     }
 
                     // 多意图：委托 MultiIntentExecutor
-                    return multiIntentExecutor.execute(conversationId, allIntents, skillMap, fallbackSkill);
+                    return multiIntentExecutor.execute(conversationId, allIntents, skillMap, fallbackSkill, userId);
                 }).subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
         );
     }

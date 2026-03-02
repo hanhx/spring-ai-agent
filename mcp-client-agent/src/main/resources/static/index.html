@@ -607,6 +607,11 @@
             <span class="status-dot"></span>
             AI Agent
         </div>
+        <select id="userSelect" onchange="changeUser()" style="margin-right: 10px; padding: 4px 8px; border-radius: 4px; background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border-color);">
+            <option value="user1">user1</option>
+            <option value="user2">user2</option>
+            <option value="anonymous">anonymous</option>
+        </select>
         <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="切换主题">
             <span id="themeIcon">&#9790;</span>
         </button>
@@ -711,6 +716,24 @@
     let conversations = []; // { id, title, messages: [] }
     let currentConvId = null;
     let isLoading = false;
+    let currentUser = localStorage.getItem('currentUser') || 'user1';
+
+    // 初始化用户选择
+    function initUser() {
+        const userSelect = document.getElementById('userSelect');
+        if (userSelect) {
+            userSelect.value = currentUser;
+        }
+    }
+
+    function changeUser() {
+        const userSelect = document.getElementById('userSelect');
+        currentUser = userSelect.value;
+        localStorage.setItem('currentUser', currentUser);
+        console.log('切换用户:', currentUser);
+    }
+
+    initUser();
 
     // Init
     newConversation();
@@ -863,7 +886,11 @@
         try {
             const res = await fetch('/api/agent/chat/stream', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'text/event-stream',
+                    'X-User-Id': currentUser
+                },
                 body: JSON.stringify({ conversationId: currentConvId, message })
             });
 

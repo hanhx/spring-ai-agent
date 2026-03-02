@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.hhx.agi.infra.dao.UserProfileMapper">
+
+    <select id="selectByUserId" resultType="com.hhx.agi.infra.po.UserProfilePO">
+        SELECT *
+        FROM user_profile
+        WHERE user_id = #{userId}
+        ORDER BY id
+    </select>
+
+    <insert id="upsert" parameterType="com.hhx.agi.infra.po.UserProfilePO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO user_profile (user_id, profile_key, profile_value, source_message, created_at, updated_at)
+        VALUES (#{po.userId}, #{po.profileKey}, #{po.profileValue}, #{po.sourceMessage}, #{po.createdAt}, #{po.updatedAt})
+        ON DUPLICATE KEY UPDATE
+            profile_value = VALUES(profile_value),
+            source_message = VALUES(source_message),
+            updated_at = VALUES(updated_at)
+    </insert>
+
+</mapper>
