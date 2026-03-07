@@ -78,12 +78,12 @@ public class DashScopeEmbeddingClient {
 
             JsonNode root = objectMapper.readTree(response.body());
 
-            if (root == null || !root.has("sql/data") || !root.get("sql/data").isArray()) {
+            if (root == null || !root.has("data") || !root.get("data").isArray()) {
                 throw new IllegalStateException("invalid embedding response payload");
             }
 
             List<float[]> vectors = new ArrayList<>();
-            for (JsonNode item : root.get("sql/data")) {
+            for (JsonNode item : root.get("data")) {
                 JsonNode embeddingNode = item.get("embedding");
                 if (embeddingNode == null || !embeddingNode.isArray()) {
                     continue;
