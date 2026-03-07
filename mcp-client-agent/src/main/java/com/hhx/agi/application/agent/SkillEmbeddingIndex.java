@@ -4,9 +4,11 @@ import com.hhx.agi.infra.client.DashScopeEmbeddingClient;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * Skill 候选检索 —— 优先使用 Embedding 检索 Top-K（若启用且可用），
@@ -22,17 +24,16 @@ public class SkillEmbeddingIndex {
     private static final int DEFAULT_TOP_K = 5;
     private final DashScopeEmbeddingClient embeddingClient;
     private final SkillLoader skillLoader;
-    private final boolean embeddingEnabled;
+    @Value("${dashscope.embedding.enabled:true}")
+    private boolean embeddingEnabled;
     private final Map<String, float[]> skillVectors = new LinkedHashMap<>();
     private boolean indexReady = false;
 
     public SkillEmbeddingIndex(
             DashScopeEmbeddingClient embeddingClient,
-            SkillLoader skillLoader,
-            @org.springframework.beans.factory.annotation.Value("${dashscope.embedding.enabled:true}") boolean embeddingEnabled) {
+            SkillLoader skillLoader) {
         this.embeddingClient = embeddingClient;
         this.skillLoader = skillLoader;
-        this.embeddingEnabled = embeddingEnabled;
     }
 
     @PostConstruct
@@ -117,8 +118,12 @@ public class SkillEmbeddingIndex {
             selected.add("chitchat");
 
             List<SkillDefinition> result = new ArrayList<>();
-            for (SkillDefinition skill : allSkills) {
-                if (selected.contains(skill.name())) {
+            // 按 selected 的顺序（即相似度排序）遍历，保持正确的顺序
+            Map<String, SkillDefinition> skillByName = allSkills.stream()
+                    .collect(Collectors.toMap(SkillDefinition::name, s -> s));
+            for (String skillName : selected) {
+                SkillDefinition skill = skillByName.get(skillName);
+                if (skill != null) {
                     result.add(skill);
                 }
             }
@@ -158,8 +163,11 @@ public class SkillEmbeddingIndex {
         selected.add("chitchat");
 
         List<SkillDefinition> result = new ArrayList<>();
-        for (SkillDefinition skill : allSkills) {
-            if (selected.contains(skill.name())) {
+        Map<String, SkillDefinition> skillByName = allSkills.stream()
+                .collect(Collectors.toMap(SkillDefinition::name, s -> s));
+        for (String skillName : selected) {
+            SkillDefinition skill = skillByName.get(skillName);
+            if (skill != null) {
                 result.add(skill);
             }
         }
@@ -243,6 +251,59 @@ public class SkillEmbeddingIndex {
         }
         return grams;
     }
+
+    /**
+     * 检索与用户消息最相关的 Top-K 个 Skill，返回带分数的结果
+     */
+    public List<SkillScore> retrieveTopKWithScores(String userMessage, int topK) {
+        List<SkillDefinition> allSkills = skillLoader.getSkills();
+        List<SkillScore> result = new ArrayList<>();
+
+        if (!embeddingEnabled || !indexReady) {
+            // 词法检索
+            List<Map.Entry<String, Double>> scores = new ArrayList<>();
+            for (SkillDefinition skill : allSkills) {
+                scores.add(Map.entry(skill.name(), lexicalScore(userMessage, skill)));
+            }
+            scores.sort((a, b) -> Double.compare(b.getValue(), a.getValue()));
+            for (Map.Entry<String, Double> entry : scores) {
+                SkillDefinition skill = allSkills.stream()
+                        .filter(s -> s.name().equals(entry.getKey()))
+                        .findFirst().orElse(null);
+                if (skill != null) {
+                    result.add(new SkillScore(skill, entry.getValue(), "lexical"));
+                }
+            }
+            return result;
+        }
+
+        try {
+            float[] queryVector = embeddingClient.embedSingleText(userMessage);
+            List<Map.Entry<String, Double>> scores = new ArrayList<>();
+            for (Map.Entry<String, float[]> entry : skillVectors.entrySet()) {
+                double sim = cosineSimilarity(queryVector, entry.getValue());
+                scores.add(Map.entry(entry.getKey(), sim));
+            }
+            scores.sort((a, b) -> Double.compare(b.getValue(), a.getValue()));
+
+            for (Map.Entry<String, Double> entry : scores) {
+                SkillDefinition skill = allSkills.stream()
+                        .filter(s -> s.name().equals(entry.getKey()))
+                        .findFirst().orElse(null);
+                if (skill != null) {
+                    result.add(new SkillScore(skill, entry.getValue(), "embedding"));
+                }
+            }
+        } catch (Exception e) {
+            log.warn("[SkillEmbeddingIndex] Embedding 检索失败: {}", e.getMessage());
+        }
+        return result;
+    }
+
+    /**
+     * 带分数的 Skill 检索结果
+     */
+    public record SkillScore(SkillDefinition skill, double score, String method) {}
 
     private double cosineSimilarity(float[] a, float[] b) {
         if (a.length != b.length) return 0;

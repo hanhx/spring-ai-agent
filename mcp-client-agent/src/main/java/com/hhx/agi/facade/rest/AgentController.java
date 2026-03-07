@@ -152,11 +152,19 @@ public class AgentController {
             @RequestParam String query) {
         return Mono.fromCallable(() -> {
             var topSkills = embeddingIndex.retrieveTopK(query);
+            var scores = embeddingIndex.retrieveTopKWithScores(query, 10);
             return ResponseEntity.ok(Map.<String, Object>of(
                     "query", query,
                     "indexReady", embeddingIndex.isIndexReady(),
                     "topSkills", topSkills.stream()
                             .map(s -> Map.of("name", s.name(), "description", s.description()))
+                            .toList(),
+                    "allScores", scores.stream()
+                            .map(ss -> Map.of(
+                                    "name", ss.skill().name(),
+                                    "score", ss.score(),
+                                    "method", ss.method()
+                            ))
                             .toList()
             ));
         }).subscribeOn(Schedulers.boundedElastic());

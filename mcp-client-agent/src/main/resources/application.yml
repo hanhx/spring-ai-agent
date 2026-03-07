@@ -23,7 +23,7 @@ spring:
       embedding:
         enabled: ${EMBEDDING_ENABLED:true}
         options:
-          model: ${EMBEDDING_MODEL:text-embedding-v3}
+          model: ${EMBEDDING_MODEL:text-embedding-v4}
 
     # MCP Client 配置
     mcp:

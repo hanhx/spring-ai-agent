@@ -244,7 +244,7 @@ public class WeatherTools {
             parts.add("天气 " + (dayWeather != null ? dayWeather : "-") + " / 夜间 " + (nightWeather != null ? nightWeather : "-"));
         }
         if (dayTemp != null || nightTemp != null) {
-            parts.add("气温 " + (nightTemp != null ? nightTemp : "?") + "~" + (dayTemp != null ? dayTemp : "?") + "°C");
+            parts.add("气温 " + (nightTemp != null ? nightTemp : "?") + "-" + (dayTemp != null ? dayTemp : "?") + "°C");
         }
         if (dayWindDir != null || dayWindPower != null) {
             parts.add("风况 " + (dayWindDir != null ? dayWindDir : "") + (dayWindPower != null ? " " + dayWindPower : ""));
@@ -298,7 +298,7 @@ public class WeatherTools {
             if (temp != null) sb.append(temp).append("°C ");
             if (min != null || max != null) {
                 sb.append("(").append(min != null ? min : "?")
-                        .append("~")
+                        .append("-")
                         .append(max != null ? max : "?")
                         .append("°C) ");
             }
