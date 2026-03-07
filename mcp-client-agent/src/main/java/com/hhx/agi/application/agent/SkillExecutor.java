@@ -121,12 +121,15 @@ public class SkillExecutor {
     /**
      * Plan-and-Execute 流式模式 —— Plan → Execute → Observe → (RePlan?) → Final Answer
      */
-    public Flux<PlanActionEvent> planAndExecute(SkillDefinition skill, String conversationId, String userMessage, String model) {
-        log.info("[SkillExecutor] Plan&Execute Skill [{}]，用户消息: {}，model: {}", skill.name(), userMessage, model);
+    public Flux<PlanActionEvent> planAndExecute(SkillDefinition skill, String conversationId, String userMessage, String model, String userId) {
+        log.info("[SkillExecutor] Plan&Execute Skill [{}]，用户消息: {}，model: {}，userId: {}", skill.name(), userMessage, model, userId);
+
+        // 设置用户上下文（用于同步 JDBC 操作）
+        com.hhx.agi.infra.config.UserContext.setUserId(userId);
         chatMemory.add(conversationId, new UserMessage(userMessage));
 
         String enrichedMessage = enrichWithHistory(conversationId, userMessage);
-        ExecutionContext ctx = new ExecutionContext(skill, conversationId, userMessage, enrichedMessage, model);
+        ExecutionContext ctx = new ExecutionContext(skill, conversationId, userMessage, enrichedMessage, model, userId);
 
         Mono<Void> preload = preloadPhase(ctx);
         Flux<PlanActionEvent> planPhase = planPhase(ctx);
@@ -134,6 +137,7 @@ public class SkillExecutor {
         Flux<PlanActionEvent> finalPhase = finalPhase(ctx);
 
         return Flux.concat(preload.thenMany(planPhase), executePhase, finalPhase)
+                .doFinally(signal -> com.hhx.agi.infra.config.UserContext.clear())
                 .onErrorResume(e -> {
                     log.error("[SkillExecutor] Plan&Execute Skill [{}] 出错: {}", skill.name(), e.getMessage(), e);
                     return Flux.just(PlanActionEvent.error("执行出错: " + e.getMessage()), PlanActionEvent.done());
@@ -180,6 +184,8 @@ public class SkillExecutor {
             return Flux.concat(
                     Mono.just(PlanActionEvent.planning("正在生成最终回复...")),
                     Mono.fromCallable(() -> {
+                        // 在新线程上重新设置 UserContext
+                        com.hhx.agi.infra.config.UserContext.setUserId(ctx.userId());
                         String finalAnswer = invokeSummarizer(ctx);
                         chatMemory.add(ctx.conversationId(), new AssistantMessage(finalAnswer));
                         log.info("[SkillExecutor] Plan&Execute Skill [{}] 完成，共 {} 步，RePlan {} 次",

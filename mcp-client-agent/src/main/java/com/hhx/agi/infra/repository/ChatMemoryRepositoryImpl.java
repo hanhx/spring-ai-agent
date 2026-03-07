@@ -16,18 +16,18 @@ import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
+/**
+ * 我们的 ChatMemory 存储实现 —— 用于 ChatApplicationService
+ */
 @Repository
 public class ChatMemoryRepositoryImpl implements ChatMemoryRepository {
 
     @Autowired
     private ChatMemoryMapper chatMemoryMapper;
 
-    @Autowired
-    private UserContext userContext;
-
     @Override
     public Optional<ChatMemory> findByConversationId(ConversationId conversationId) {
-        String userId = userContext.getUserId();
+        String userId = UserContext.getUserId();
         List<ChatMemoryPO> pos = chatMemoryMapper.selectByUserIdAndConversationId(userId, conversationId.getValue());
         if (CollectionUtils.isEmpty(pos)) {
             return Optional.of(new ChatMemory(conversationId));
@@ -38,7 +38,7 @@ public class ChatMemoryRepositoryImpl implements ChatMemoryRepository {
     @Override
     @Transactional
     public void save(ChatMemory chatMemory) {
-        String userId = userContext.getUserId();
+        String userId = UserContext.getUserId();
         chatMemoryMapper.deleteByUserIdAndConversationId(userId, chatMemory.getConversationId().getValue());
 
         List<ChatMemoryPO> pos = ChatMemoryConverter.toPOs(chatMemory);
@@ -53,13 +53,13 @@ public class ChatMemoryRepositoryImpl implements ChatMemoryRepository {
     @Override
     @Transactional
     public void deleteByConversationId(ConversationId conversationId) {
-        String userId = userContext.getUserId();
+        String userId = UserContext.getUserId();
         chatMemoryMapper.deleteByUserIdAndConversationId(userId, conversationId.getValue());
     }
 
     @Override
     public List<ConversationId> findAllConversationIds() {
-        String userId = userContext.getUserId();
+        String userId = UserContext.getUserId();
         List<String> ids = chatMemoryMapper.selectAllConversationIdsByUserId(userId);
         if (CollectionUtils.isEmpty(ids)) {
             return List.of();

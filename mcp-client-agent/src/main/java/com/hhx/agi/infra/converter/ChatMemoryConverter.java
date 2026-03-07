@@ -5,31 +5,34 @@ import com.hhx.agi.domain.model.ConversationId;
 import com.hhx.agi.domain.model.Message;
 import com.hhx.agi.infra.po.ChatMemoryPO;
 import org.apache.commons.collections4.CollectionUtils;
+import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.SystemMessage;
+import org.springframework.ai.chat.messages.UserMessage;
 
 import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
 
 public class ChatMemoryConverter {
-    
+
     public static ChatMemory toDomain(List<ChatMemoryPO> pos) {
         if (CollectionUtils.isEmpty(pos)) {
             return null;
         }
-        
+
         String conversationId = pos.get(0).getConversationId();
         List<Message> messages = pos.stream()
                 .map(po -> new Message(po.getMessageType(), po.getContent(), po.getCreatedAt()))
                 .collect(Collectors.toList());
-        
+
         return new ChatMemory(new ConversationId(conversationId), messages);
     }
-    
+
     public static List<ChatMemoryPO> toPOs(ChatMemory chatMemory) {
         if (chatMemory == null || chatMemory.isEmpty()) {
             return Collections.emptyList();
         }
-        
+
         return chatMemory.getMessages().stream()
                 .map(message -> {
                     ChatMemoryPO po = new ChatMemoryPO();
@@ -38,6 +41,32 @@ public class ChatMemoryConverter {
                     po.setContent(message.getContent());
                     po.setCreatedAt(message.getCreatedAt());
                     return po;
+                })
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * 将 ChatMemoryPO 列表转换为 Spring AI 的 Message 列表
+     */
+    public static List<org.springframework.ai.chat.messages.Message> toMessages(List<ChatMemoryPO> pos) {
+        if (CollectionUtils.isEmpty(pos)) {
+            return List.of();
+        }
+
+        return pos.stream()
+                .map(po -> {
+                    String type = po.getMessageType();
+                    String content = po.getContent();
+                    switch (type) {
+                        case "USER":
+                            return (org.springframework.ai.chat.messages.Message) new UserMessage(content);
+                        case "ASSISTANT":
+                            return (org.springframework.ai.chat.messages.Message) new AssistantMessage(content);
+                        case "SYSTEM":
+                            return (org.springframework.ai.chat.messages.Message) new SystemMessage(content);
+                        default:
+                            return (org.springframework.ai.chat.messages.Message) new UserMessage(content);
+                    }
                 })
                 .collect(Collectors.toList());
     }

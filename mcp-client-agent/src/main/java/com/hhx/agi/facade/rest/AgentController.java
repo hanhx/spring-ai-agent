@@ -1,10 +1,12 @@
 package com.hhx.agi.facade.rest;
 
 import com.hhx.agi.infra.config.McpConnectionManager;
+import com.hhx.agi.infra.config.UserContext;
 import com.hhx.agi.application.agent.PlanActionEvent;
 import com.hhx.agi.application.agent.SkillEmbeddingIndex;
 import com.hhx.agi.application.agent.SkillResponse;
 import com.hhx.agi.application.agent.SkillRouter;
+import com.hhx.agi.application.service.ChatApplicationService;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,28 +31,38 @@ import java.util.Map;
 public class AgentController {
 
     private static final Logger log = LoggerFactory.getLogger(AgentController.class);
+    private static final String DEFAULT_USER_ID = "anonymous";
 
     private final SkillRouter skillRouter;
     private final McpConnectionManager mcpManager;
     private final SkillEmbeddingIndex embeddingIndex;
+    private final ChatApplicationService chatApplicationService;
 
     @Autowired
     public AgentController(SkillRouter skillRouter, McpConnectionManager mcpManager,
-                           SkillEmbeddingIndex embeddingIndex) {
+                           SkillEmbeddingIndex embeddingIndex, ChatApplicationService chatApplicationService) {
         this.skillRouter = skillRouter;
         this.mcpManager = mcpManager;
         this.embeddingIndex = embeddingIndex;
+        this.chatApplicationService = chatApplicationService;
     }
 
     /**
      * 智能对话 —— LLM + MCP 工具自动决策
      */
     @PostMapping("/chat")
-    public Mono<ResponseEntity<ChatResponse>> chat(@Valid @RequestBody ChatRequest request) {
-        log.info("Chat request: conversationId={}, message={}", request.conversationId(), request.message());
+    public Mono<ResponseEntity<ChatResponse>> chat(
+            @RequestHeader(value = "X-User-Id", required = false, defaultValue = DEFAULT_USER_ID) String userId,
+            @Valid @RequestBody ChatRequest request) {
+        log.info("Chat request: userId={}, conversationId={}", userId, request.conversationId());
         return Mono.fromCallable(() -> {
-            SkillResponse response = skillRouter.route(request.conversationId(), request.message());
-            return ResponseEntity.ok(ChatResponse.from(request.conversationId(), response));
+            UserContext.setUserId(userId);
+            try {
+                SkillResponse response = skillRouter.route(request.conversationId(), request.message());
+                return ResponseEntity.ok(ChatResponse.from(request.conversationId(), response));
+            } finally {
+                UserContext.clear();
+            }
         }).subscribeOn(Schedulers.boundedElastic());
     }
 
@@ -58,9 +70,14 @@ public class AgentController {
      * 流式对话 —— Plan & Action 模式，Flux SSE 逐个推送事件（实时）
      */
     @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public Flux<PlanActionEvent> chatStream(@Valid @RequestBody ChatRequest request) {
-        log.info("Stream chat request: message={}, model={}", request.message(), request.model());
-        return skillRouter.streamRoute(request.conversationId(), request.message(), request.model());
+    public Flux<PlanActionEvent> chatStream(
+            @RequestHeader(value = "X-User-Id", required = false, defaultValue = DEFAULT_USER_ID) String userId,
+            @Valid @RequestBody ChatRequest request) {
+        log.info("Stream chat request: userId={}, message={}", userId, request.message());
+        UserContext.setUserId(userId);
+        return skillRouter.streamRoute(request.conversationId(), request.message(), request.model(), userId)
+                .contextWrite(ctx -> ctx.put(UserContext.USER_ID_KEY, userId))
+                .doFinally(signal -> UserContext.clear());
     }
 
     /**
@@ -167,6 +184,67 @@ public class AgentController {
                             ))
                             .toList()
             ));
+        }).subscribeOn(Schedulers.boundedElastic());
+    }
+
+    // ==================== 会话历史管理 ====================
+
+    /**
+     * 获取当前用户的所有会话 ID 列表
+     */
+    @GetMapping("/conversations")
+    public Mono<ResponseEntity<List<String>>> getConversations(
+            @RequestHeader(value = "X-User-Id", required = false, defaultValue = DEFAULT_USER_ID) String userId) {
+        return Mono.fromCallable(() -> {
+            UserContext.setUserId(userId);
+            try {
+                List<String> conversationIds = chatApplicationService.getAllConversationIds();
+                return ResponseEntity.ok(conversationIds);
+            } finally {
+                UserContext.clear();
+            }
+        }).subscribeOn(Schedulers.boundedElastic());
+    }
+
+    /**
+     * 获取指定会话的历史消息
+     */
+    @GetMapping("/conversations/{conversationId}/history")
+    public Mono<ResponseEntity<Map<String, Object>>> getConversationHistory(
+            @RequestHeader(value = "X-User-Id", required = false, defaultValue = DEFAULT_USER_ID) String userId,
+            @PathVariable String conversationId) {
+        return Mono.fromCallable(() -> {
+            UserContext.setUserId(userId);
+            try {
+                var history = chatApplicationService.getConversationHistory(conversationId);
+                return ResponseEntity.<Map<String, Object>>ok(Map.of(
+                        "conversationId", conversationId,
+                        "messages", history.getMessages()
+                ));
+            } finally {
+                UserContext.clear();
+            }
+        }).subscribeOn(Schedulers.boundedElastic());
+    }
+
+    /**
+     * 删除指定会话的历史记录
+     */
+    @DeleteMapping("/conversations/{conversationId}")
+    public Mono<ResponseEntity<Map<String, Object>>> deleteConversation(
+            @RequestHeader(value = "X-User-Id", required = false, defaultValue = DEFAULT_USER_ID) String userId,
+            @PathVariable String conversationId) {
+        return Mono.fromCallable(() -> {
+            UserContext.setUserId(userId);
+            try {
+                chatApplicationService.clearHistory(conversationId);
+                return ResponseEntity.ok(Map.<String, Object>of(
+                        "success", true,
+                        "message", "会话已删除"
+                ));
+            } finally {
+                UserContext.clear();
+            }
         }).subscribeOn(Schedulers.boundedElastic());
     }
 }

@@ -102,8 +102,8 @@ public class SkillRouter {
     /**
      * Plan & Action 流式路由 —— 支持多意图 + 待办意图恢复
      */
-    public Flux<PlanActionEvent> streamRoute(String conversationId, String userMessage, String model) {
-        log.info("[SkillRouter] 流式请求: {}, model: {}", userMessage, model);
+    public Flux<PlanActionEvent> streamRoute(String conversationId, String userMessage, String model, String userId) {
+        log.info("[SkillRouter] 流式请求: {}, model: {}, userId: {}", userMessage, model, userId);
 
         return Flux.concat(
                 Flux.just(PlanActionEvent.planning("🤔 正在理解您的问题...")),
@@ -131,12 +131,12 @@ public class SkillRouter {
                         }
                         return Flux.concat(
                                 Flux.just(PlanActionEvent.planning("💡 已理解，正在规划执行方案...")),
-                                executor.planAndExecute(skill, conversationId, intent.subTask(), model)
+                                executor.planAndExecute(skill, conversationId, intent.subTask(), model, userId)
                         );
                     }
 
                     // 多意图：委托 MultiIntentExecutor
-                    return multiIntentExecutor.execute(conversationId, allIntents, skillMap, fallbackSkill, model);
+                    return multiIntentExecutor.execute(conversationId, allIntents, skillMap, fallbackSkill, model, userId);
                 }).subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
         );
     }
@@ -244,15 +244,22 @@ public class SkillRouter {
     private String buildRouterPrompt(List<SkillDefinition> skills) {
         StringBuilder sb = new StringBuilder();
         sb.append("""
-                你是一个意图识别路由器。你的任务是：根据用户的消息，判断应该由哪个 Skill 来处理。
-                
+                你是一个意图识别路由器。你的任务是：根据用户的消息和对话历史，判断应该由哪个 Skill 来处理。
+
                 ## 规则
                 - 如果用户消息只包含一个意图，返回一行：skill名称
                 - 如果用户消息包含多个不同意图，每行返回一个：skill名称|子任务描述
                 - 不要解释，不要加标点，严格按格式返回
                 - 如果无法确定，返回 chitchat
                 - 同一个 Skill 的多个参数不算多意图（如"查北京和上海天气"是一个 weather 意图）
-                
+
+                ## 追问回答识别（重要）
+                如果对话历史中上一条是系统的追问（如"请问您想查询哪个城市？"），当前用户消息是在回答追问：
+                - 用户回答"对"、"是的"、"好的"、"确认" → 路由到上一轮同一个 Skill
+                - 用户回答具体内容（如城市名、订单号） → 路由到上一轮同一个 Skill
+                - 示例：历史有"请问您想查询哪个城市的明天天气？"，用户说"北京" → 返回 weather
+                - 示例：历史有"请问您想查询北京明天的具体天气情况吗？"，用户说"对" → 返回 weather
+
                 ## 可用的 Skills
                 """);
 

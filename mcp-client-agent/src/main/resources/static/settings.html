@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>设置 - AI Agent</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -42,9 +43,9 @@
         .setting-item {
             background: var(--bg-card);
             border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 16px 20px;
-            margin-bottom: 12px;
+            border-radius: 8px;
+            padding: 12px 16px;
+            margin-bottom: 10px;
             cursor: pointer;
             display: flex;
             justify-content: space-between;
@@ -58,7 +59,10 @@
         .setting-desc { font-size: 13px; color: var(--text-secondary); }
         .setting-value { font-size: 13px; color: #10a37f; margin-top: 4px; }
 
-        .setting-arrow { color: var(--text-secondary); font-size: 18px; }
+        .setting-arrow {
+            color: var(--text-secondary);
+            font-size: 32px;
+        }
 
         /* Modal */
         .modal-overlay {
@@ -130,7 +134,7 @@
                 <div class="setting-desc">切换深色/浅色模式</div>
                 <div class="setting-value" id="themeValue">深色模式</div>
             </div>
-            <span class="setting-arrow">›</span>
+            <span class="setting-arrow"><i class="fa-solid fa-chevron-right"></i></span>
         </div>
 
         <!-- 修改密码 -->
@@ -139,7 +143,7 @@
                 <div class="setting-title">修改密码</div>
                 <div class="setting-desc">更新登录密码</div>
             </div>
-            <span class="setting-arrow">›</span>
+            <span class="setting-arrow"><i class="fa-solid fa-chevron-right"></i></span>
         </div>
 
         <!-- 用户信息 -->
@@ -148,7 +152,7 @@
                 <div class="setting-title">账户信息</div>
                 <div class="setting-desc">用户名: <span id="usernameDisplay"></span></div>
             </div>
-            <span class="setting-arrow">›</span>
+            <span class="setting-arrow"><i class="fa-solid fa-chevron-right"></i></span>
         </div>
 
         <!-- Skills 管理 -->
@@ -157,7 +161,7 @@
                 <div class="setting-title">Skills 管理</div>
                 <div class="setting-desc">配置 AI 技能和向量索引</div>
             </div>
-            <span class="setting-arrow">›</span>
+            <span class="setting-arrow"><i class="fa-solid fa-chevron-right"></i></span>
         </div>
 
         <!-- 退出登录 -->
@@ -165,7 +169,7 @@
             <div class="setting-left">
                 <div class="setting-title" style="color: #ff5252;">退出登录</div>
             </div>
-            <span class="setting-arrow" style="color: #ff5252;">›</span>
+            <span class="setting-arrow" style="color: #ff5252;"><i class="fa-solid fa-chevron-right"></i></span>
         </div>
     </div>
 

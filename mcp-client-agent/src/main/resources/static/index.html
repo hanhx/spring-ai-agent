@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Agent</title>
     <link rel="icon" type="image/jpeg" href="/icon/icon93.jpg">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <script src="/marked.min.js"></script>
     <style>
         :root {
@@ -47,7 +48,7 @@
             --text-muted: #8e8e8e;
             --accent: #10a37f;
             --accent-hover: #0d8c6d;
-            --border: #e5e5e5;
+            --border: #f7f7f8;
             --code-bg: rgba(0,0,0,0.05);
             --pre-bg: #f6f6f6;
             --scrollbar-thumb: #c5c5c5;
@@ -192,12 +193,15 @@
             position: absolute;
             left: 12px;
             background: none;
-            border: none;
+            border: 1px solid var(--border);
             color: var(--text-secondary);
             cursor: pointer;
-            padding: 6px;
-            border-radius: 6px;
-            display: block;
+            padding: 6px 10px;
+            border-radius: 8px;
+            font-size: 16px;
+            display: flex;
+            align-items: center;
+            transition: background 0.2s, border-color 0.2s;
         }
         .sidebar-toggle:hover { background: var(--bg-hover); }
 
@@ -660,7 +664,7 @@
 <div class="main">
     <div class="topbar">
         <button class="sidebar-toggle" onclick="toggleSidebar()">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+            <i class="fa-solid fa-bars"></i>
         </button>
         <button class="theme-toggle" onclick="window.location.href='/settings.html'" title="设置">
             <span>&#9881;</span>
@@ -719,16 +723,8 @@
         </div>
         <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px;">
             <select class="model-select" id="modelSelect" onchange="changeModel()" style="background: transparent; border: 1px solid var(--border); color: var(--text-primary); padding: 4px 10px; border-radius: 6px; font-size: 13px; cursor: pointer;">
-                <option value="MiniMax-M2.5">MiniMax-M2.5</option>
-                <option value="glm-5">GLM-5</option>
                 <option value="qwen-plus">Qwen-Plus</option>
-                <option value="qwen3.5-plus">Qwen3.5-Plus</option>
-                <option value="qwen-max">Qwen-Max</option>
                 <option value="qwen3-max">Qwen3-Max</option>
-                <option value="qwen-flash">Qwen-Flash</option>
-                <option value="qwen-coder-plus">Qwen-Coder-Plus</option>
-                <option value="qwen-long">Qwen-Long</option>
-                <option value="deepseek-chat">DeepSeek-Chat</option>
             </select>
             <div class="input-hint">Enter 发送 &middot; Shift+Enter 换行</div>
         </div>
@@ -832,9 +828,67 @@
         console.log('切换模型:', currentModel);
     }
 
+    // ===== Load History from Backend =====
+    async function loadConversations() {
+        try {
+            const token = localStorage.getItem('token');
+            const res = await fetch('/api/agent/conversations', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (!res.ok) {
+                console.warn('加载会话列表失败:', res.status);
+                newConversation();
+                return;
+            }
+            const conversationIds = await res.json();
+            if (!conversationIds || conversationIds.length === 0) {
+                newConversation();
+                return;
+            }
+
+            // 加载每个会话的历史消息
+            for (const convId of conversationIds) {
+                try {
+                    const historyRes = await fetch(`/api/agent/conversations/${convId}/history`, {
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    });
+                    if (historyRes.ok) {
+                        const history = await historyRes.json();
+                        const messages = history.messages || [];
+                        // 转换消息格式
+                        const formattedMessages = messages.map(m => ({
+                            role: m.messageType === 'USER' ? 'user' : 'assistant',
+                            content: m.content
+                        }));
+                        // 用第一条用户消息作为标题
+                        const firstUserMsg = formattedMessages.find(m => m.role === 'user');
+                        const title = firstUserMsg
+                            ? (firstUserMsg.content.length > 30 ? firstUserMsg.content.substring(0, 30) + '...' : firstUserMsg.content)
+                            : 'Chat';
+                        conversations.push({ id: convId, title, messages: formattedMessages });
+                    }
+                } catch (e) {
+                    console.warn('加载会话历史失败:', convId, e);
+                }
+            }
+
+            if (conversations.length === 0) {
+                newConversation();
+            } else {
+                // 选择最新的会话并展示消息
+                currentConvId = conversations[conversations.length - 1].id;
+                renderConvList();
+                replayConversation(currentConvId);
+            }
+        } catch (e) {
+            console.error('加载会话列表异常:', e);
+            newConversation();
+        }
+    }
+
     // Init
     initModel();
-    newConversation();
+    loadConversations();
 
     // ===== Conversation Management =====
     function newConversation() {
