@@ -1,5 +1,6 @@
 package com.hhx.agi.facade.rest;
 
+import com.hhx.agi.application.agent.SkillEmbeddingIndex;
 import com.hhx.agi.application.service.SkillService;
 import com.hhx.agi.infra.po.SkillRegistryPO;
 import org.springframework.http.ResponseEntity;
@@ -127,17 +128,17 @@ public class SkillController {
                     .body(Map.of("error", "query is required"));
         }
 
-        List<SkillRegistryPO> results = skillService.testMatch(query, topK);
+        List<SkillEmbeddingIndex.SkillScore> results = skillService.testMatch(query, topK);
 
         Map<String, Object> response = new HashMap<>();
         response.put("query", query);
         response.put("topK", topK);
-        response.put("results", results.stream().map(po -> {
+        response.put("results", results.stream().map(s -> {
             Map<String, Object> item = new HashMap<>();
-            item.put("name", po.getName());
-            item.put("description", po.getDescription());
-            item.put("enabled", po.getEnabled());
-            item.put("priority", po.getPriority());
+            item.put("name", s.skill().name());
+            item.put("description", s.skill().description());
+            item.put("score", s.score());
+            item.put("method", s.method());
             return item;
         }).toList());
 

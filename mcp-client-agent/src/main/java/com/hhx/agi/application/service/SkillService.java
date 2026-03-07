@@ -188,12 +188,10 @@ public class SkillService {
     }
 
     /**
-     * 测试向量匹配（数据库 Top-N 查询）
+     * 测试向量匹配
      */
-    public List<SkillRegistryPO> testMatch(String query, int topK) {
-        float[] queryVector = embeddingClient.embedSingleText(query);
-        byte[] queryVectorBytes = floatArrayToBytes(queryVector);
-        return skillRegistryMapper.selectTopNByVectorSimilarity(true, queryVectorBytes, topK);
+    public List<SkillEmbeddingIndex.SkillScore> testMatch(String query, int topK) {
+        return skillEmbeddingIndex.retrieveTopKWithScores(query, topK);
     }
 
     /**
@@ -211,20 +209,5 @@ public class SkillService {
             log.warn("[SkillService] 向量生成失败: {}", e.getMessage());
             return null;
         }
-    }
-
-    /**
-     * float[] 转 byte[]（MySQL VECTOR 格式）
-     */
-    private byte[] floatArrayToBytes(float[] floats) {
-        if (floats == null || floats.length == 0) {
-            return null;
-        }
-        ByteBuffer buffer = ByteBuffer.allocate(floats.length * 4);
-        buffer.order(ByteOrder.LITTLE_ENDIAN);
-        for (float f : floats) {
-            buffer.putFloat(f);
-        }
-        return buffer.array();
     }
 }
