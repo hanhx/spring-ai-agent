@@ -631,21 +631,6 @@
         <button class="sidebar-toggle" onclick="toggleSidebar()">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
         </button>
-        <div class="model-selector">
-            <span class="status-dot"></span>
-            <select class="model-select" id="modelSelect" onchange="changeModel()">
-                <option value="MiniMax-M2.5">MiniMax-M2.5</option>
-                <option value="glm-5">GLM-5</option>
-                <option value="qwen-plus">Qwen-Plus</option>
-                <option value="qwen3.5-plus">Qwen3.5-Plus</option>
-                <option value="qwen-max">Qwen-Max</option>
-                <option value="qwen3-max">Qwen3-Max</option>
-                <option value="qwen-flash">Qwen-Flash</option>
-                <option value="qwen-coder-plus">Qwen-Coder-Plus</option>
-                <option value="qwen-long">Qwen-Long</option>
-                <option value="deepseek-chat">DeepSeek-Chat</option>
-            </select>
-        </div>
         <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="切换主题">
             <span id="themeIcon">&#9790;</span>
         </button>
@@ -701,7 +686,21 @@
                 <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
             </button>
         </div>
-        <div class="input-hint">Enter 发送 &middot; Shift+Enter 换行</div>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px;">
+            <select class="model-select" id="modelSelect" onchange="changeModel()" style="background: transparent; border: 1px solid var(--border); color: var(--text-primary); padding: 4px 10px; border-radius: 6px; font-size: 13px; cursor: pointer;">
+                <option value="MiniMax-M2.5">MiniMax-M2.5</option>
+                <option value="glm-5">GLM-5</option>
+                <option value="qwen-plus">Qwen-Plus</option>
+                <option value="qwen3.5-plus">Qwen3.5-Plus</option>
+                <option value="qwen-max">Qwen-Max</option>
+                <option value="qwen3-max">Qwen3-Max</option>
+                <option value="qwen-flash">Qwen-Flash</option>
+                <option value="qwen-coder-plus">Qwen-Coder-Plus</option>
+                <option value="qwen-long">Qwen-Long</option>
+                <option value="deepseek-chat">DeepSeek-Chat</option>
+            </select>
+            <div class="input-hint">Enter 发送 &middot; Shift+Enter 换行</div>
+        </div>
     </div>
 </div>
 

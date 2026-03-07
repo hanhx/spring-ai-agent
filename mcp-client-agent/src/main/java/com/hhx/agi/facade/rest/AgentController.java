@@ -2,6 +2,7 @@ package com.hhx.agi.facade.rest;
 
 import com.hhx.agi.infra.config.McpConnectionManager;
 import com.hhx.agi.application.agent.PlanActionEvent;
+import com.hhx.agi.application.agent.SkillEmbeddingIndex;
 import com.hhx.agi.application.agent.SkillResponse;
 import com.hhx.agi.application.agent.SkillRouter;
 import jakarta.validation.Valid;
@@ -31,11 +32,14 @@ public class AgentController {
 
     private final SkillRouter skillRouter;
     private final McpConnectionManager mcpManager;
+    private final SkillEmbeddingIndex embeddingIndex;
 
     @Autowired
-    public AgentController(SkillRouter skillRouter, McpConnectionManager mcpManager) {
+    public AgentController(SkillRouter skillRouter, McpConnectionManager mcpManager,
+                           SkillEmbeddingIndex embeddingIndex) {
         this.skillRouter = skillRouter;
         this.mcpManager = mcpManager;
+        this.embeddingIndex = embeddingIndex;
     }
 
     /**
@@ -121,6 +125,40 @@ public class AgentController {
                         "message", "所有 MCP Server 已重连"
                 ));
             }
+        }).subscribeOn(Schedulers.boundedElastic());
+    }
+
+    /**
+     * 测试 Embedding 是否生效
+     * 返回 Embedding 索引状态和测试结果
+     */
+    @GetMapping("/embedding/test")
+    public Mono<ResponseEntity<Map<String, Object>>> testEmbedding() {
+        return Mono.fromCallable(() -> {
+            boolean indexReady = embeddingIndex.isIndexReady();
+            return ResponseEntity.ok(Map.<String, Object>of(
+                    "indexReady", indexReady,
+                    "status", indexReady ? "Embedding 索引已就绪，使用百炼向量检索" : "Embedding 未启用或失败，使用词法检索",
+                    "skills", skillRouter.getSkillInfo()
+            ));
+        }).subscribeOn(Schedulers.boundedElastic());
+    }
+
+    /**
+     * 测试 Embedding 相似度检索
+     */
+    @GetMapping("/embedding/search")
+    public Mono<ResponseEntity<Map<String, Object>>> testEmbeddingSearch(
+            @RequestParam String query) {
+        return Mono.fromCallable(() -> {
+            var topSkills = embeddingIndex.retrieveTopK(query);
+            return ResponseEntity.ok(Map.<String, Object>of(
+                    "query", query,
+                    "indexReady", embeddingIndex.isIndexReady(),
+                    "topSkills", topSkills.stream()
+                            .map(s -> Map.of("name", s.name(), "description", s.description()))
+                            .toList()
+            ));
         }).subscribeOn(Schedulers.boundedElastic());
     }
 }

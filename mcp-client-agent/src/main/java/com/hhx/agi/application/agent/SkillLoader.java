@@ -1,10 +1,11 @@
 package com.hhx.agi.application.agent;
 
+import com.hhx.agi.infra.dao.SkillRegistryMapper;
+import com.hhx.agi.infra.po.SkillRegistryPO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 import java.io.BufferedReader;
@@ -28,12 +29,12 @@ public class SkillLoader {
 
     private static final Logger log = LoggerFactory.getLogger(SkillLoader.class);
 
-    private final JdbcTemplate jdbc;
+    private final SkillRegistryMapper skillRegistryMapper;
     private final List<SkillDefinition> skills;
     private final Map<String, String> dbPrompts = new LinkedHashMap<>();
 
-    public SkillLoader(JdbcTemplate jdbc) {
-        this.jdbc = jdbc;
+    public SkillLoader(SkillRegistryMapper skillRegistryMapper) {
+        this.skillRegistryMapper = skillRegistryMapper;
         this.skills = loadAllSkills();
     }
 
@@ -91,29 +92,24 @@ public class SkillLoader {
     private List<SkillDefinition> loadFromDatabase() {
         List<SkillDefinition> result = new ArrayList<>();
         try {
-            String sql = """
-                    SELECT name, description, allowed_tools, prompt_body
-                    FROM skill_registry
-                    WHERE enabled = TRUE
-                    ORDER BY priority DESC, id ASC
-                    """;
+            List<SkillRegistryPO> dbSkills = skillRegistryMapper.selectEnabledOrderByPriority(true);
 
-            result = jdbc.query(sql, (rs, i) -> {
-                String name = rs.getString("name");
-                String description = rs.getString("description");
-                String allowedToolsRaw = rs.getString("allowed_tools");
-                String promptBody = rs.getString("prompt_body");
+            for (SkillRegistryPO po : dbSkills) {
+                String name = po.getName();
+                String description = po.getDescription();
+                String allowedToolsRaw = po.getAllowedTools();
+                String promptBody = po.getPromptBody();
 
                 if (promptBody != null) {
                     dbPrompts.put(name, promptBody);
                 }
-                return new SkillDefinition(
+                result.add(new SkillDefinition(
                         name,
                         description != null ? description : "",
                         parseAllowedToolsRaw(allowedToolsRaw),
                         "db:" + name
-                );
-            });
+                ));
+            }
 
             log.info("[SkillLoader] DB 加载 {} 个 Skills", result.size());
         } catch (Exception e) {

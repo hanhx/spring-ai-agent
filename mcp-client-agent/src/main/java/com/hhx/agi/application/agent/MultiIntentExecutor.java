@@ -1,9 +1,10 @@
 package com.hhx.agi.application.agent;
 
+import com.hhx.agi.infra.dao.PendingIntentMapper;
+import com.hhx.agi.infra.po.PendingIntentPO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -29,35 +30,38 @@ public class MultiIntentExecutor {
 
     private final SkillExecutor executor;
     private final ChatClient.Builder chatClientBuilder;
-    private final JdbcTemplate jdbc;
+    private final PendingIntentMapper pendingIntentMapper;
 
-    public MultiIntentExecutor(SkillExecutor executor, ChatClient.Builder chatClientBuilder, JdbcTemplate jdbc) {
+    public MultiIntentExecutor(SkillExecutor executor, ChatClient.Builder chatClientBuilder, PendingIntentMapper pendingIntentMapper) {
         this.executor = executor;
         this.chatClientBuilder = chatClientBuilder;
-        this.jdbc = jdbc;
+        this.pendingIntentMapper = pendingIntentMapper;
     }
 
-    /** 取出并清除待办意图（从 H2） */
+    /** 取出并清除待办意图（从数据库） */
     public List<SkillIntent> popPending(String conversationId) {
-        List<SkillIntent> pending = jdbc.query(
-                "SELECT skill_name, sub_task FROM pending_intents WHERE conversation_id = ? ORDER BY id",
-                (rs, i) -> new SkillIntent(rs.getString("skill_name"), rs.getString("sub_task")),
-                conversationId);
+        List<PendingIntentPO> pendingPos = pendingIntentMapper.selectByConversationId(conversationId);
+        List<SkillIntent> pending = pendingPos.stream()
+                .map(po -> new SkillIntent(po.getSkillName(), po.getSubTask()))
+                .toList();
         if (!pending.isEmpty()) {
-            jdbc.update("DELETE FROM pending_intents WHERE conversation_id = ?", conversationId);
-            log.info("[MultiIntent] 从 H2 取出 {} 个待办意图", pending.size());
+            pendingIntentMapper.deleteByConversationId(conversationId);
+            log.info("[MultiIntent] 从数据库取出 {} 个待办意图", pending.size());
         }
         return pending.isEmpty() ? null : pending;
     }
 
-    /** 保存待办意图到 H2 */
+    /** 保存待办意图到数据库 */
     private void savePending(String conversationId, List<SkillIntent> intents) {
-        jdbc.update("DELETE FROM pending_intents WHERE conversation_id = ?", conversationId);
+        pendingIntentMapper.deleteByConversationId(conversationId);
         for (SkillIntent intent : intents) {
-            jdbc.update("INSERT INTO pending_intents (conversation_id, skill_name, sub_task) VALUES (?, ?, ?)",
-                    conversationId, intent.skillName(), intent.subTask());
+            PendingIntentPO po = new PendingIntentPO();
+            po.setConversationId(conversationId);
+            po.setSkillName(intent.skillName());
+            po.setSubTask(intent.subTask());
+            pendingIntentMapper.insert(po);
         }
-        log.info("[MultiIntent] 保存 {} 个待办意图到 H2", intents.size());
+        log.info("[MultiIntent] 保存 {} 个待办意图到数据库", intents.size());
     }
 
     /** 合并新意图与待办意图（按 skillName 去重） */
