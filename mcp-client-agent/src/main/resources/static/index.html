@@ -203,6 +203,34 @@
             border-color: var(--text-muted);
         }
 
+        /* Model selector */
+        .model-selector {
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .model-select {
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-size: 13px;
+            cursor: pointer;
+            outline: none;
+            transition: background 0.2s, border-color 0.2s;
+        }
+        .model-select:hover {
+            background: var(--bg-hover);
+            border-color: var(--text-muted);
+        }
+        .model-select:focus {
+            border-color: var(--accent);
+        }
+
         /* Chat area */
         .chat-scroll {
             flex: 1;
@@ -603,9 +631,20 @@
         <button class="sidebar-toggle" onclick="toggleSidebar()">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
         </button>
-        <div class="model-label">
+        <div class="model-selector">
             <span class="status-dot"></span>
-            AI Agent
+            <select class="model-select" id="modelSelect" onchange="changeModel()">
+                <option value="MiniMax-M2.5">MiniMax-M2.5</option>
+                <option value="glm-5">GLM-5</option>
+                <option value="qwen-plus">Qwen-Plus</option>
+                <option value="qwen3.5-plus">Qwen3.5-Plus</option>
+                <option value="qwen-max">Qwen-Max</option>
+                <option value="qwen3-max">Qwen3-Max</option>
+                <option value="qwen-flash">Qwen-Flash</option>
+                <option value="qwen-coder-plus">Qwen-Coder-Plus</option>
+                <option value="qwen-long">Qwen-Long</option>
+                <option value="deepseek-chat">DeepSeek-Chat</option>
+            </select>
         </div>
         <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="切换主题">
             <span id="themeIcon">&#9790;</span>
@@ -711,8 +750,26 @@
     let conversations = []; // { id, title, messages: [] }
     let currentConvId = null;
     let isLoading = false;
+    let currentModel = 'MiniMax-M2.5';
+
+    // ===== Model Management =====
+    function initModel() {
+        const saved = localStorage.getItem('selectedModel');
+        if (saved) {
+            currentModel = saved;
+            document.getElementById('modelSelect').value = saved;
+        }
+    }
+
+    function changeModel() {
+        const select = document.getElementById('modelSelect');
+        currentModel = select.value;
+        localStorage.setItem('selectedModel', currentModel);
+        console.log('切换模型:', currentModel);
+    }
 
     // Init
+    initModel();
     newConversation();
 
     // ===== Conversation Management =====
@@ -864,7 +921,7 @@
             const res = await fetch('/api/agent/chat/stream', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
-                body: JSON.stringify({ conversationId: currentConvId, message })
+                body: JSON.stringify({ conversationId: currentConvId, message, model: currentModel })
             });
 
             if (!res.ok) {

@@ -76,8 +76,8 @@ public class MultiIntentExecutor {
      * 串行执行多个意图，追问时保存待办，完成后汇总
      */
     public Flux<PlanActionEvent> execute(String conversationId, List<SkillIntent> intents,
-                                          Map<String, SkillDefinition> skillMap, SkillDefinition fallback) {
-        log.info("[MultiIntent] 共 {} 个子任务", intents.size());
+                                          Map<String, SkillDefinition> skillMap, SkillDefinition fallback, String model) {
+        log.info("[MultiIntent] 共 {} 个子任务, model: {}", intents.size(), model);
         int total = intents.size();
 
         final boolean[] askUserDetected = {false};
@@ -108,7 +108,7 @@ public class MultiIntentExecutor {
                 final boolean[] hasAction = {false};
                 return Flux.concat(
                         Flux.just(PlanActionEvent.skillStart(idx, total, skillName, subTask)),
-                        executor.planAndExecute(skill, conversationId, subTask)
+                        executor.planAndExecute(skill, conversationId, subTask, model)
                                 .doOnNext(event -> {
                                     if ("action".equals(event.type())) hasAction[0] = true;
                                     if ("result".equals(event.type()) && event.content() != null) {

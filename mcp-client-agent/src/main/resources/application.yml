@@ -17,8 +17,8 @@ spring:
       chat:
         completions-path: /chat/completions
         options:
-          model: ${OPENAI_MODEL:qwen-plus}
-          temperature: 0.7
+          model: ${OPENAI_MODEL:MiniMax-M2.5}
+          temperature: 0.3
           max-tokens: 4096
       embedding:
         enabled: ${EMBEDDING_ENABLED:true}

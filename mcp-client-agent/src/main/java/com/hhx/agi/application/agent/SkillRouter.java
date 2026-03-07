@@ -102,8 +102,8 @@ public class SkillRouter {
     /**
      * Plan & Action 流式路由 —— 支持多意图 + 待办意图恢复
      */
-    public Flux<PlanActionEvent> streamRoute(String conversationId, String userMessage) {
-        log.info("[SkillRouter] 流式请求: {}", userMessage);
+    public Flux<PlanActionEvent> streamRoute(String conversationId, String userMessage, String model) {
+        log.info("[SkillRouter] 流式请求: {}, model: {}", userMessage, model);
 
         return Flux.concat(
                 Flux.just(PlanActionEvent.planning("🤔 正在理解您的问题...")),
@@ -131,12 +131,12 @@ public class SkillRouter {
                         }
                         return Flux.concat(
                                 Flux.just(PlanActionEvent.planning("💡 已理解，正在规划执行方案...")),
-                                executor.planAndExecute(skill, conversationId, intent.subTask())
+                                executor.planAndExecute(skill, conversationId, intent.subTask(), model)
                         );
                     }
 
                     // 多意图：委托 MultiIntentExecutor
-                    return multiIntentExecutor.execute(conversationId, allIntents, skillMap, fallbackSkill);
+                    return multiIntentExecutor.execute(conversationId, allIntents, skillMap, fallbackSkill, model);
                 }).subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
         );
     }

@@ -55,8 +55,8 @@ public class AgentController {
      */
     @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<PlanActionEvent> chatStream(@Valid @RequestBody ChatRequest request) {
-        log.info("Stream chat request: message={}", request.message());
-        return skillRouter.streamRoute(request.conversationId(), request.message());
+        log.info("Stream chat request: message={}, model={}", request.message(), request.model());
+        return skillRouter.streamRoute(request.conversationId(), request.message(), request.model());
     }
 
     /**

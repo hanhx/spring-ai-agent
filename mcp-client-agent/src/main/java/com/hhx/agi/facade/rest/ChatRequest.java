@@ -4,6 +4,7 @@ import jakarta.validation.constraints.NotBlank;
 
 public record ChatRequest(
         @NotBlank(message = "conversationId 不能为空") String conversationId,
-        @NotBlank(message = "消息不能为空") String message
+        @NotBlank(message = "消息不能为空") String message,
+        String model  // 可选：前端指定模型，如 MiniMax-M2.5, qwen-plus 等
 ) {
 }

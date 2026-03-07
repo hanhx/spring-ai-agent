@@ -121,12 +121,12 @@ public class SkillExecutor {
     /**
      * Plan-and-Execute 流式模式 —— Plan → Execute → Observe → (RePlan?) → Final Answer
      */
-    public Flux<PlanActionEvent> planAndExecute(SkillDefinition skill, String conversationId, String userMessage) {
-        log.info("[SkillExecutor] Plan&Execute Skill [{}]，用户消息: {}", skill.name(), userMessage);
+    public Flux<PlanActionEvent> planAndExecute(SkillDefinition skill, String conversationId, String userMessage, String model) {
+        log.info("[SkillExecutor] Plan&Execute Skill [{}]，用户消息: {}，model: {}", skill.name(), userMessage, model);
         chatMemory.add(conversationId, new UserMessage(userMessage));
 
         String enrichedMessage = enrichWithHistory(conversationId, userMessage);
-        ExecutionContext ctx = new ExecutionContext(skill, conversationId, userMessage, enrichedMessage);
+        ExecutionContext ctx = new ExecutionContext(skill, conversationId, userMessage, enrichedMessage, model);
 
         Mono<Void> preload = preloadPhase(ctx);
         Flux<PlanActionEvent> planPhase = planPhase(ctx);
@@ -307,7 +307,13 @@ public class SkillExecutor {
                 请直接输出步骤：
                 """.formatted(toolsInfo, ctx.enrichedMessage(), completedInfo);
 
-        String result = chatClientBuilder.build().prompt().user(prompt).call().content();
+        ChatClient.Builder builder = chatClientBuilder.clone();
+        if (ctx.model() != null && !ctx.model().isBlank()) {
+            builder.defaultOptions(org.springframework.ai.chat.prompt.ChatOptions.builder()
+                    .model(ctx.model())
+                    .build());
+        }
+        String result = builder.build().prompt().user(prompt).call().content();
         return Arrays.stream(result.split("\n"))
                 .map(this::normalizePlannerLine)
                 .filter(s -> !s.isEmpty())
@@ -388,7 +394,13 @@ public class SkillExecutor {
         ToolCallback[] guardedTools = withSingleCallGuard(scopedTools, stepDesc);
 
         try {
-            String result = chatClientBuilder.build()
+            ChatClient.Builder builder = chatClientBuilder.clone();
+            if (ctx.model() != null && !ctx.model().isBlank()) {
+                builder.defaultOptions(org.springframework.ai.chat.prompt.ChatOptions.builder()
+                        .model(ctx.model())
+                        .build());
+            }
+            String result = builder.build()
                     .prompt()
                     .user(stepPrompt)
                     .toolCallbacks(guardedTools)
