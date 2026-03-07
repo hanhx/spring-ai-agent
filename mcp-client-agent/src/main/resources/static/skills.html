@@ -5,7 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Skill 管理</title>
     <style>
-        :root {
+        /* Dark theme (default) */
+        [data-theme="dark"] {
             --bg-main: #212121;
             --bg-card: #2f2f2f;
             --bg-input: #3a3a3a;
@@ -17,7 +18,21 @@
             --danger: #ef4444;
             --danger-hover: #dc2626;
             --border: #3e3e3e;
-            --radius: 8px;
+        }
+
+        /* Light theme */
+        [data-theme="light"] {
+            --bg-main: #ffffff;
+            --bg-card: #f7f7f8;
+            --bg-input: #ffffff;
+            --text-primary: #1a1a1a;
+            --text-secondary: #666666;
+            --text-muted: #999999;
+            --accent: #10a37f;
+            --accent-hover: #1a7f64;
+            --danger: #ef4444;
+            --danger-hover: #dc2626;
+            --border: #e5e5e5;
         }
 
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -28,6 +43,11 @@
             color: var(--text-primary);
             min-height: 100vh;
             padding: 24px;
+            transition: background 0.3s, color 0.3s;
+        }
+
+        :root {
+            --radius: 8px;
         }
 
         .container {
