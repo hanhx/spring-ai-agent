@@ -407,6 +407,10 @@
     </div>
 
     <script>
+        // 初始化主题
+        const savedTheme = localStorage.getItem('theme') || 'dark';
+        document.documentElement.setAttribute('data-theme', savedTheme);
+
         let skills = [];
 
         // Load skills on page load
