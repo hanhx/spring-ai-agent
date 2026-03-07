@@ -1,7 +1,8 @@
 package com.hhx.agi.application.agent;
 
 import com.hhx.agi.infra.client.DashScopeEmbeddingClient;
-import jakarta.annotation.PostConstruct;
+import com.hhx.agi.infra.dao.SkillRegistryMapper;
+import com.hhx.agi.infra.po.SkillRegistryPO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -11,10 +12,8 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * Skill 候选检索 —— 优先使用 Embedding 检索 Top-K（若启用且可用），
- * 否则降级到词法打分（名称命中 + token 重叠 + bigram 相似度）。
- *
- * 当 Skill 数量较少（<= topK）时自动退化为全量返回，无额外开销。
+ * Skill 向量检索
+ * 查询时从数据库读取向量，在 Java 层计算相似度
  */
 @Component
 public class SkillEmbeddingIndex {
@@ -24,71 +23,22 @@ public class SkillEmbeddingIndex {
     private static final int DEFAULT_TOP_K = 5;
     private final DashScopeEmbeddingClient embeddingClient;
     private final SkillLoader skillLoader;
+    private final SkillRegistryMapper skillRegistryMapper;
+
     @Value("${dashscope.embedding.enabled:true}")
     private boolean embeddingEnabled;
-    private final Map<String, float[]> skillVectors = new LinkedHashMap<>();
-    private boolean indexReady = false;
 
     public SkillEmbeddingIndex(
             DashScopeEmbeddingClient embeddingClient,
-            SkillLoader skillLoader) {
+            SkillLoader skillLoader,
+            SkillRegistryMapper skillRegistryMapper) {
         this.embeddingClient = embeddingClient;
         this.skillLoader = skillLoader;
-    }
-
-    @PostConstruct
-    public void buildIndex() {
-        try {
-            List<SkillDefinition> skills = skillLoader.getSkills();
-            if (skills.isEmpty()) {
-                log.warn("[SkillEmbeddingIndex] 没有 Skill 可索引");
-                return;
-            }
-
-            if (!embeddingEnabled) {
-                log.info("[SkillEmbeddingIndex] Embedding 未启用，使用词法 Top-K 路由");
-                indexReady = false;
-                return;
-            }
-
-            if (skills.size() <= DEFAULT_TOP_K) {
-                log.info("[SkillEmbeddingIndex] Skill 数量({}) <= topK({})，直接走全量/词法路由", skills.size(), DEFAULT_TOP_K);
-                indexReady = false;
-                return;
-            }
-
-            List<String> texts = new ArrayList<>();
-            List<String> names = new ArrayList<>();
-            for (SkillDefinition skill : skills) {
-                names.add(skill.name());
-                texts.add(skill.name() + ": " + skill.description());
-            }
-
-            log.info("[SkillEmbeddingIndex] 正在为 {} 个 Skill 生成 Embedding (DashScope API)...", texts.size());
-            List<float[]> vectors = embeddingClient.embedTexts(texts);
-
-            skillVectors.clear();
-            for (int i = 0; i < names.size(); i++) {
-                float[] vector = vectors.get(i);
-                skillVectors.put(names.get(i), vector);
-            }
-
-            indexReady = !skillVectors.isEmpty();
-            if (indexReady) {
-                log.info("[SkillEmbeddingIndex] 索引构建完成，共 {} 个 Skill，向量维度: {}",
-                        skillVectors.size(),
-                        skillVectors.values().iterator().next().length);
-            }
-        } catch (Exception e) {
-            log.warn("[SkillEmbeddingIndex] 索引构建失败，降级为词法 Top-K: {}", e.getMessage());
-            indexReady = false;
-        }
+        this.skillRegistryMapper = skillRegistryMapper;
     }
 
     /**
      * 检索与用户消息最相关的 Top-K 个 Skill
-     * 如果索引未就绪或 Skill 数量 <= topK，返回全部 Skill
-     * chitchat 始终包含在结果中作为兜底
      */
     public List<SkillDefinition> retrieveTopK(String userMessage, int topK) {
         List<SkillDefinition> allSkills = skillLoader.getSkills();
@@ -97,42 +47,56 @@ public class SkillEmbeddingIndex {
             return allSkills;
         }
 
-        if (!embeddingEnabled || !indexReady) {
+        if (!embeddingEnabled) {
             return retrieveTopKByLexical(userMessage, allSkills, topK);
         }
 
         try {
+            // 生成查询向量
             float[] queryVector = embeddingClient.embedSingleText(userMessage);
 
+            // 从数据库查询有向量的 skill
+            List<SkillRegistryPO> skillsWithVector = skillRegistryMapper.selectEnabledWithVector(true);
+
+            if (skillsWithVector.isEmpty()) {
+                log.warn("[SkillEmbeddingIndex] 数据库没有向量数据，降级为词法匹配");
+                return retrieveTopKByLexical(userMessage, allSkills, topK);
+            }
+
+            // 在 Java 层计算相似度并排序
             List<Map.Entry<String, Double>> scores = new ArrayList<>();
-            for (Map.Entry<String, float[]> entry : skillVectors.entrySet()) {
-                double sim = cosineSimilarity(queryVector, entry.getValue());
-                scores.add(Map.entry(entry.getKey(), sim));
+            for (SkillRegistryPO po : skillsWithVector) {
+                float[] embedding = po.getEmbedding();
+                if (embedding != null && embedding.length > 0) {
+                    double sim = cosineSimilarity(queryVector, embedding);
+                    scores.add(Map.entry(po.getName(), sim));
+                }
             }
             scores.sort((a, b) -> Double.compare(b.getValue(), a.getValue()));
 
-            Set<String> selected = new LinkedHashSet<>();
+            // 取 Top-K
+            Set<String> topNames = new LinkedHashSet<>();
             for (int i = 0; i < Math.min(topK, scores.size()); i++) {
-                selected.add(scores.get(i).getKey());
+                topNames.add(scores.get(i).getKey());
             }
-            selected.add("chitchat");
+            topNames.add("chitchat");
 
+            // 转换为 SkillDefinition
             List<SkillDefinition> result = new ArrayList<>();
-            // 按 selected 的顺序（即相似度排序）遍历，保持正确的顺序
             Map<String, SkillDefinition> skillByName = allSkills.stream()
-                    .collect(Collectors.toMap(SkillDefinition::name, s -> s));
-            for (String skillName : selected) {
-                SkillDefinition skill = skillByName.get(skillName);
+                    .collect(Collectors.toMap(SkillDefinition::name, s -> s, (a, b) -> a));
+
+            for (String name : topNames) {
+                SkillDefinition skill = skillByName.get(name);
                 if (skill != null) {
                     result.add(skill);
                 }
             }
 
-            log.info("[SkillEmbeddingIndex] Embedding Top-{}: {} (from {} skills)",
-                    topK, selected, allSkills.size());
+            log.info("[SkillEmbeddingIndex] 向量 Top-{}: {}", result.size(), topNames);
             return result;
         } catch (Exception e) {
-            log.warn("[SkillEmbeddingIndex] Embedding 检索失败，降级为词法 Top-K: {}", e.getMessage());
+            log.warn("[SkillEmbeddingIndex] 向量查询失败，降级为词法匹配: {}", e.getMessage());
             return retrieveTopKByLexical(userMessage, allSkills, topK);
         }
     }
@@ -144,10 +108,9 @@ public class SkillEmbeddingIndex {
         return retrieveTopK(userMessage, DEFAULT_TOP_K);
     }
 
-    public boolean isIndexReady() {
-        return indexReady;
-    }
-
+    /**
+     * 词法匹配（降级方案）
+     */
     private List<SkillDefinition> retrieveTopKByLexical(String userMessage, List<SkillDefinition> allSkills, int topK) {
         List<Map.Entry<String, Double>> scores = new ArrayList<>();
         for (SkillDefinition skill : allSkills) {
@@ -159,12 +122,11 @@ public class SkillEmbeddingIndex {
         for (int i = 0; i < Math.min(topK, scores.size()); i++) {
             selected.add(scores.get(i).getKey());
         }
-        // 确保 chitchat 始终在候选中
         selected.add("chitchat");
 
         List<SkillDefinition> result = new ArrayList<>();
         Map<String, SkillDefinition> skillByName = allSkills.stream()
-                .collect(Collectors.toMap(SkillDefinition::name, s -> s));
+                .collect(Collectors.toMap(SkillDefinition::name, s -> s, (a, b) -> a));
         for (String skillName : selected) {
             SkillDefinition skill = skillByName.get(skillName);
             if (skill != null) {
@@ -172,8 +134,76 @@ public class SkillEmbeddingIndex {
             }
         }
 
-        log.info("[SkillEmbeddingIndex] Lexical Top-{}: {} (from {} skills)",
-                topK, selected, allSkills.size());
+        log.info("[SkillEmbeddingIndex] Lexical Top-{}: {}", result.size(), selected);
+        return result;
+    }
+
+    /**
+     * 检索带分数的结果（用于测试）
+     */
+    public List<SkillScore> retrieveTopKWithScores(String userMessage, int topK) {
+        List<SkillDefinition> allSkills = skillLoader.getSkills();
+        List<SkillScore> result = new ArrayList<>();
+
+        if (!embeddingEnabled) {
+            return retrieveTopKByLexicalWithScores(userMessage, allSkills, topK);
+        }
+
+        try {
+            float[] queryVector = embeddingClient.embedSingleText(userMessage);
+            List<SkillRegistryPO> skillsWithVector = skillRegistryMapper.selectEnabledWithVector(true);
+
+            List<Map.Entry<String, Double>> scores = new ArrayList<>();
+            for (SkillRegistryPO po : skillsWithVector) {
+                float[] embedding = po.getEmbedding();
+                if (embedding != null && embedding.length > 0) {
+                    double sim = cosineSimilarity(queryVector, embedding);
+                    scores.add(Map.entry(po.getName(), sim));
+                }
+            }
+            scores.sort((a, b) -> Double.compare(b.getValue(), a.getValue()));
+
+            Map<String, SkillDefinition> skillByName = allSkills.stream()
+                    .collect(Collectors.toMap(SkillDefinition::name, s -> s, (a, b) -> a));
+
+            for (int i = 0; i < Math.min(topK, scores.size()); i++) {
+                String name = scores.get(i).getKey();
+                SkillDefinition skill = skillByName.get(name);
+                if (skill != null) {
+                    result.add(new SkillScore(skill, scores.get(i).getValue(), "embedding"));
+                }
+            }
+
+            // 添加 chitchat 兜底
+            SkillDefinition chitchat = skillByName.get("chitchat");
+            if (chitchat != null && result.stream().noneMatch(s -> s.skill().name().equals("chitchat"))) {
+                result.add(new SkillScore(chitchat, 0.0, "fallback"));
+            }
+        } catch (Exception e) {
+            log.warn("[SkillEmbeddingIndex] 向量查询失败: {}", e.getMessage());
+            return retrieveTopKByLexicalWithScores(userMessage, allSkills, topK);
+        }
+        return result;
+    }
+
+    private List<SkillScore> retrieveTopKByLexicalWithScores(String userMessage, List<SkillDefinition> allSkills, int topK) {
+        List<SkillScore> result = new ArrayList<>();
+        List<Map.Entry<String, Double>> scores = new ArrayList<>();
+        for (SkillDefinition skill : allSkills) {
+            scores.add(Map.entry(skill.name(), lexicalScore(userMessage, skill)));
+        }
+        scores.sort((a, b) -> Double.compare(b.getValue(), a.getValue()));
+
+        Map<String, SkillDefinition> skillByName = allSkills.stream()
+                .collect(Collectors.toMap(SkillDefinition::name, s -> s, (a, b) -> a));
+
+        for (int i = 0; i < Math.min(topK, scores.size()); i++) {
+            String name = scores.get(i).getKey();
+            SkillDefinition skill = skillByName.get(name);
+            if (skill != null) {
+                result.add(new SkillScore(skill, scores.get(i).getValue(), "lexical"));
+            }
+        }
         return result;
     }
 
@@ -253,60 +283,10 @@ public class SkillEmbeddingIndex {
     }
 
     /**
-     * 检索与用户消息最相关的 Top-K 个 Skill，返回带分数的结果
+     * 计算余弦相似度
      */
-    public List<SkillScore> retrieveTopKWithScores(String userMessage, int topK) {
-        List<SkillDefinition> allSkills = skillLoader.getSkills();
-        List<SkillScore> result = new ArrayList<>();
-
-        if (!embeddingEnabled || !indexReady) {
-            // 词法检索
-            List<Map.Entry<String, Double>> scores = new ArrayList<>();
-            for (SkillDefinition skill : allSkills) {
-                scores.add(Map.entry(skill.name(), lexicalScore(userMessage, skill)));
-            }
-            scores.sort((a, b) -> Double.compare(b.getValue(), a.getValue()));
-            for (Map.Entry<String, Double> entry : scores) {
-                SkillDefinition skill = allSkills.stream()
-                        .filter(s -> s.name().equals(entry.getKey()))
-                        .findFirst().orElse(null);
-                if (skill != null) {
-                    result.add(new SkillScore(skill, entry.getValue(), "lexical"));
-                }
-            }
-            return result;
-        }
-
-        try {
-            float[] queryVector = embeddingClient.embedSingleText(userMessage);
-            List<Map.Entry<String, Double>> scores = new ArrayList<>();
-            for (Map.Entry<String, float[]> entry : skillVectors.entrySet()) {
-                double sim = cosineSimilarity(queryVector, entry.getValue());
-                scores.add(Map.entry(entry.getKey(), sim));
-            }
-            scores.sort((a, b) -> Double.compare(b.getValue(), a.getValue()));
-
-            for (Map.Entry<String, Double> entry : scores) {
-                SkillDefinition skill = allSkills.stream()
-                        .filter(s -> s.name().equals(entry.getKey()))
-                        .findFirst().orElse(null);
-                if (skill != null) {
-                    result.add(new SkillScore(skill, entry.getValue(), "embedding"));
-                }
-            }
-        } catch (Exception e) {
-            log.warn("[SkillEmbeddingIndex] Embedding 检索失败: {}", e.getMessage());
-        }
-        return result;
-    }
-
-    /**
-     * 带分数的 Skill 检索结果
-     */
-    public record SkillScore(SkillDefinition skill, double score, String method) {}
-
     private double cosineSimilarity(float[] a, float[] b) {
-        if (a.length != b.length) return 0;
+        if (a == null || b == null || a.length != b.length) return 0;
         double dotProduct = 0, normA = 0, normB = 0;
         for (int i = 0; i < a.length; i++) {
             dotProduct += a[i] * b[i];
@@ -317,4 +297,15 @@ public class SkillEmbeddingIndex {
         return denominator == 0 ? 0 : dotProduct / denominator;
     }
 
+    /**
+     * 带分数的 Skill 检索结果
+     */
+    public record SkillScore(SkillDefinition skill, double score, String method) {}
+
+    /**
+     * 检查向量索引是否可用
+     */
+    public boolean isIndexReady() {
+        return embeddingEnabled;
+    }
 }

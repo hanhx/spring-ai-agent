@@ -3,6 +3,7 @@ package com.hhx.agi.infra.repository;
 import com.hhx.agi.domain.model.ChatMemory;
 import com.hhx.agi.domain.model.ConversationId;
 import com.hhx.agi.domain.repository.ChatMemoryRepository;
+import com.hhx.agi.infra.config.UserContext;
 import com.hhx.agi.infra.converter.ChatMemoryConverter;
 import com.hhx.agi.infra.dao.ChatMemoryMapper;
 import com.hhx.agi.infra.po.ChatMemoryPO;
@@ -17,39 +18,49 @@ import java.util.stream.Collectors;
 
 @Repository
 public class ChatMemoryRepositoryImpl implements ChatMemoryRepository {
-    
+
     @Autowired
     private ChatMemoryMapper chatMemoryMapper;
-    
+
+    @Autowired
+    private UserContext userContext;
+
     @Override
     public Optional<ChatMemory> findByConversationId(ConversationId conversationId) {
-        List<ChatMemoryPO> pos = chatMemoryMapper.selectByConversationId(conversationId.getValue());
+        String userId = userContext.getUserId();
+        List<ChatMemoryPO> pos = chatMemoryMapper.selectByUserIdAndConversationId(userId, conversationId.getValue());
         if (CollectionUtils.isEmpty(pos)) {
             return Optional.of(new ChatMemory(conversationId));
         }
         return Optional.ofNullable(ChatMemoryConverter.toDomain(pos));
     }
-    
+
     @Override
     @Transactional
     public void save(ChatMemory chatMemory) {
-        chatMemoryMapper.deleteByConversationId(chatMemory.getConversationId().getValue());
-        
+        String userId = userContext.getUserId();
+        chatMemoryMapper.deleteByUserIdAndConversationId(userId, chatMemory.getConversationId().getValue());
+
         List<ChatMemoryPO> pos = ChatMemoryConverter.toPOs(chatMemory);
         if (CollectionUtils.isNotEmpty(pos)) {
-            pos.forEach(chatMemoryMapper::insert);
+            pos.forEach(po -> {
+                po.setUserId(userId);
+                chatMemoryMapper.insert(po);
+            });
         }
     }
-    
+
     @Override
     @Transactional
     public void deleteByConversationId(ConversationId conversationId) {
-        chatMemoryMapper.deleteByConversationId(conversationId.getValue());
+        String userId = userContext.getUserId();
+        chatMemoryMapper.deleteByUserIdAndConversationId(userId, conversationId.getValue());
     }
-    
+
     @Override
     public List<ConversationId> findAllConversationIds() {
-        List<String> ids = chatMemoryMapper.selectAllConversationIds();
+        String userId = userContext.getUserId();
+        List<String> ids = chatMemoryMapper.selectAllConversationIdsByUserId(userId);
         if (CollectionUtils.isEmpty(ids)) {
             return List.of();
         }

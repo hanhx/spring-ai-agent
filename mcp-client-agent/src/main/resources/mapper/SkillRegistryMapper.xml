@@ -4,10 +4,31 @@
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.hhx.agi.infra.dao.SkillRegistryMapper">
 
+    <resultMap id="skillResultMap" type="com.hhx.agi.infra.po.SkillRegistryPO">
+        <id property="id" column="id"/>
+        <result property="name" column="name"/>
+        <result property="description" column="description"/>
+        <result property="allowedTools" column="allowed_tools"/>
+        <result property="promptBody" column="prompt_body"/>
+        <result property="enabled" column="enabled"/>
+        <result property="priority" column="priority"/>
+        <result property="embedding" column="embedding" typeHandler="com.hhx.agi.infra.handler.VectorTypeHandler"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+    </resultMap>
+
     <select id="selectEnabledOrderByPriority" resultType="com.hhx.agi.infra.po.SkillRegistryPO">
         SELECT *
         FROM skill_registry
         WHERE enabled = #{enabled}
+        ORDER BY priority DESC, id ASC
+    </select>
+
+    <select id="selectEnabledWithVector" resultMap="skillResultMap">
+        SELECT *
+        FROM skill_registry
+        WHERE enabled = #{enabled}
+          AND embedding IS NOT NULL
         ORDER BY priority DESC, id ASC
     </select>
 

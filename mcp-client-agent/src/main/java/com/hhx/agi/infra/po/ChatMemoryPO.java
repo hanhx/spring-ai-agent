@@ -13,7 +13,9 @@ public class ChatMemoryPO {
     
     @TableId(type = IdType.AUTO)
     private Long id;
-    
+
+    private String userId; // 用户 ID，支持多用户
+
     private String conversationId;
     
     private String messageType;

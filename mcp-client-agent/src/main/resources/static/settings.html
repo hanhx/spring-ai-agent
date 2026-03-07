@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>设置 - AI Agent</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        /* Dark theme (default) */
+        [data-theme="dark"] {
+            --bg-main: #212121;
+            --bg-card: #2a2a2a;
+            --text-primary: #ececec;
+            --text-secondary: #b4b4b4;
+            --border: #3e3e3e;
+        }
+
+        /* Light theme */
+        [data-theme="light"] {
+            --bg-main: #ffffff;
+            --bg-card: #f7f7f8;
+            --text-primary: #1a1a1a;
+            --text-secondary: #666666;
+            --border: #e5e5e5;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-main);
+            color: var(--text-primary);
+            min-height: 100vh;
+            padding: 20px;
+            transition: background 0.3s, color 0.3s;
+        }
+
+        .container { max-width: 600px; margin: 0 auto; }
+        h1 { margin-bottom: 24px; font-size: 24px; }
+        .back-link { display: inline-block; margin-bottom: 20px; color: #10a37f; text-decoration: none; }
+
+        /* 配置项列表 */
+        .setting-item {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 16px 20px;
+            margin-bottom: 12px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: background 0.2s;
+        }
+        .setting-item:hover { background: var(--bg-main); }
+
+        .setting-left { display: flex; flex-direction: column; gap: 4px; }
+        .setting-title { font-size: 15px; font-weight: 500; }
+        .setting-desc { font-size: 13px; color: var(--text-secondary); }
+        .setting-value { font-size: 13px; color: #10a37f; margin-top: 4px; }
+
+        .setting-arrow { color: var(--text-secondary); font-size: 18px; }
+
+        /* Modal */
+        .modal-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.5);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .modal-overlay.active { display: flex; }
+
+        .modal {
+            background: var(--bg-card);
+            border-radius: 16px;
+            padding: 24px;
+            width: 90%;
+            max-width: 400px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .modal h2 { margin-bottom: 20px; font-size: 18px; }
+
+        .form-group { margin-bottom: 16px; }
+        .form-group label { display: block; font-size: 14px; margin-bottom: 6px; color: var(--text-secondary); }
+        .form-group input, .form-group select {
+            width: 100%;
+            padding: 10px 12px;
+            background: var(--bg-main);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 14px;
+        }
+        .form-group input:focus, .form-group select:focus {
+            outline: none;
+            border-color: #10a37f;
+        }
+
+        .modal-actions { display: flex; gap: 12px; margin-top: 20px; }
+        .btn {
+            flex: 1;
+            padding: 12px;
+            border-radius: 8px;
+            font-size: 14px;
+            cursor: pointer;
+            border: none;
+        }
+        .btn-primary { background: #10a37f; color: white; }
+        .btn-primary:hover { background: #1a7f64; }
+        .btn-secondary { background: transparent; border: 1px solid var(--border); color: var(--text-primary); }
+        .btn-secondary:hover { background: var(--bg-main); }
+
+        .error { color: #ff5252; font-size: 13px; margin-top: 8px; display: none; }
+        .success { color: #10a37f; font-size: 13px; margin-top: 8px; display: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="/" class="back-link">← 返回聊天</a>
+        <h1>设置</h1>
+
+        <!-- 主题设置 -->
+        <div class="setting-item" onclick="openModal('theme')">
+            <div class="setting-left">
+                <div class="setting-title">外观主题</div>
+                <div class="setting-desc">切换深色/浅色模式</div>
+                <div class="setting-value" id="themeValue">深色模式</div>
+            </div>
+            <span class="setting-arrow">›</span>
+        </div>
+
+        <!-- 修改密码 -->
+        <div class="setting-item" onclick="openModal('password')">
+            <div class="setting-left">
+                <div class="setting-title">修改密码</div>
+                <div class="setting-desc">更新登录密码</div>
+            </div>
+            <span class="setting-arrow">›</span>
+        </div>
+
+        <!-- 用户信息 -->
+        <div class="setting-item" onclick="openModal('profile')">
+            <div class="setting-left">
+                <div class="setting-title">账户信息</div>
+                <div class="setting-desc">用户名: <span id="usernameDisplay"></span></div>
+            </div>
+            <span class="setting-arrow">›</span>
+        </div>
+
+        <!-- 退出登录 -->
+        <div class="setting-item" onclick="logout()" style="border-color: #ff5252;">
+            <div class="setting-left">
+                <div class="setting-title" style="color: #ff5252;">退出登录</div>
+            </div>
+            <span class="setting-arrow" style="color: #ff5252;">›</span>
+        </div>
+    </div>
+
+    <!-- 主题设置 Modal -->
+    <div class="modal-overlay" id="themeModal">
+        <div class="modal">
+            <h2>外观主题</h2>
+            <div class="form-group">
+                <label>选择主题</label>
+                <select id="themeSelect">
+                    <option value="dark">深色模式</option>
+                    <option value="light">浅色模式</option>
+                </select>
+            </div>
+            <div class="success" id="themeSuccess">主题已保存</div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="closeModal('theme')">取消</button>
+                <button class="btn btn-primary" onclick="saveTheme()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 修改密码 Modal -->
+    <div class="modal-overlay" id="passwordModal">
+        <div class="modal">
+            <h2>修改密码</h2>
+            <div class="form-group">
+                <label>旧密码</label>
+                <input type="password" id="oldPassword" placeholder="请输入旧密码">
+            </div>
+            <div class="form-group">
+                <label>新密码</label>
+                <input type="password" id="newPassword" placeholder="请输入新密码（至少6位）">
+            </div>
+            <div class="form-group">
+                <label>确认新密码</label>
+                <input type="password" id="confirmPassword" placeholder="请再次输入新密码">
+            </div>
+            <div class="error" id="passwordError"></div>
+            <div class="success" id="passwordSuccess">密码修改成功</div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="closeModal('password')">取消</button>
+                <button class="btn btn-primary" onclick="savePassword()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 用户信息 Modal -->
+    <div class="modal-overlay" id="profileModal">
+        <div class="modal">
+            <h2>账户信息</h2>
+            <div class="form-group">
+                <label>用户名</label>
+                <input type="text" id="profileUsername" readonly style="opacity:0.6;">
+            </div>
+            <div class="form-group">
+                <label>昵称</label>
+                <input type="text" id="profileNickname" placeholder="设置昵称">
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="closeModal('profile')">关闭</button>
+                <button class="btn btn-primary" onclick="saveProfile()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 检查登录
+        const token = localStorage.getItem('token');
+        if (!token) window.location.href = '/login.html';
+
+        // 初始化主题
+        const savedTheme = localStorage.getItem('theme') || 'dark';
+        document.documentElement.setAttribute('data-theme', savedTheme);
+        document.getElementById('themeSelect').value = savedTheme;
+        document.getElementById('themeValue').textContent = savedTheme === 'dark' ? '深色模式' : '浅色模式';
+
+        // 用户信息
+        const username = localStorage.getItem('username');
+        const nickname = localStorage.getItem('nickname');
+        document.getElementById('usernameDisplay').textContent = username;
+        document.getElementById('profileUsername').value = username;
+        document.getElementById('profileNickname').value = nickname || username;
+
+        // Modal 操作
+        function openModal(type) {
+            document.getElementById(type + 'Modal').classList.add('active');
+        }
+        function closeModal(type) {
+            document.getElementById(type + 'Modal').classList.remove('active');
+            document.getElementById(type + 'Error') && (document.getElementById(type + 'Error').style.display = 'none');
+            document.getElementById(type + 'Success') && (document.getElementById(type + 'Success').style.display = 'none');
+        }
+
+        // 点击遮罩关闭
+        document.querySelectorAll('.modal-overlay').forEach(el => {
+            el.addEventListener('click', e => {
+                if (e.target === el) {
+                    el.classList.remove('active');
+                }
+            });
+        });
+
+        // 保存主题
+        function saveTheme() {
+            const theme = document.getElementById('themeSelect').value;
+            document.documentElement.setAttribute('data-theme', theme);
+            localStorage.setItem('theme', theme);
+            document.getElementById('themeValue').textContent = theme === 'dark' ? '深色模式' : '浅色模式';
+            document.getElementById('themeSuccess').style.display = 'block';
+            setTimeout(() => closeModal('theme'), 1000);
+        }
+
+        // 保存密码
+        async function savePassword() {
+            const oldPwd = document.getElementById('oldPassword').value;
+            const newPwd = document.getElementById('newPassword').value;
+            const confirmPwd = document.getElementById('confirmPassword').value;
+            const errorEl = document.getElementById('passwordError');
+            const successEl = document.getElementById('passwordSuccess');
+
+            if (!oldPwd || !newPwd) {
+                errorEl.textContent = '请填写所有密码字段';
+                errorEl.style.display = 'block';
+                return;
+            }
+            if (newPwd.length < 6) {
+                errorEl.textContent = '新密码至少6位';
+                errorEl.style.display = 'block';
+                return;
+            }
+            if (newPwd !== confirmPwd) {
+                errorEl.textContent = '两次输入的密码不一致';
+                errorEl.style.display = 'block';
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/auth/password', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`,
+                        'X-Username': username
+                    },
+                    body: JSON.stringify({ oldPassword: oldPwd, newPassword: newPwd })
+                });
+
+                if (!res.ok) {
+                    const data = await res.json();
+                    throw new Error(data.message || '修改失败');
+                }
+
+                successEl.style.display = 'block';
+                errorEl.style.display = 'none';
+                setTimeout(() => {
+                    localStorage.clear();
+                    window.location.href = '/login.html';
+                }, 1500);
+            } catch (err) {
+                errorEl.textContent = err.message;
+                errorEl.style.display = 'block';
+            }
+        }
+
+        // 保存昵称
+        function saveProfile() {
+            const nickname = document.getElementById('profileNickname').value;
+            localStorage.setItem('nickname', nickname);
+            closeModal('profile');
+        }
+
+        // 退出登录
+        function logout() {
+            localStorage.clear();
+            window.location.href = '/login.html';
+        }
+    </script>
+</body>
+</html>

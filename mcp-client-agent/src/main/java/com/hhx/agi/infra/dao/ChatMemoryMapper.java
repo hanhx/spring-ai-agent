@@ -10,9 +10,13 @@ import java.util.List;
 @Mapper
 public interface ChatMemoryMapper extends BaseMapper<ChatMemoryPO> {
 
-    List<ChatMemoryPO> selectByConversationId(@Param("conversationId") String conversationId);
+    List<ChatMemoryPO> selectByUserIdAndConversationId(
+            @Param("userId") String userId,
+            @Param("conversationId") String conversationId);
 
-    int deleteByConversationId(@Param("conversationId") String conversationId);
+    int deleteByUserIdAndConversationId(
+            @Param("userId") String userId,
+            @Param("conversationId") String conversationId);
 
-    List<String> selectAllConversationIds();
+    List<String> selectAllConversationIdsByUserId(@Param("userId") String userId);
 }

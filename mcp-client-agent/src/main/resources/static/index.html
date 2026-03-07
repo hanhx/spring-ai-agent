@@ -127,6 +127,32 @@
             text-align: center;
         }
 
+        .user-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .user-name {
+            color: var(--text-secondary);
+            font-size: 13px;
+        }
+
+        .logout-btn {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 12px;
+            padding: 4px 8px;
+            border-radius: 4px;
+        }
+
+        .logout-btn:hover {
+            background: var(--bg-hover);
+            color: var(--text-primary);
+        }
+
         /* ===== Main ===== */
         .main {
             flex: 1;
@@ -622,7 +648,12 @@
         </button>
     </div>
     <div class="sidebar-conversations" id="convList"></div>
-    <div class="sidebar-footer">AI Agent &middot; SKILL.md + MCP</div>
+    <div class="sidebar-footer">
+        <div class="user-info">
+            <span class="user-name" id="userName"></span>
+            <button class="logout-btn" onclick="logout()" title="登出">Exit</button>
+        </div>
+    </div>
 </aside>
 
 <!-- Main -->
@@ -631,8 +662,8 @@
         <button class="sidebar-toggle" onclick="toggleSidebar()">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
         </button>
-        <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="切换主题">
-            <span id="themeIcon">&#9790;</span>
+        <button class="theme-toggle" onclick="window.location.href='/settings.html'" title="设置">
+            <span>&#9881;</span>
         </button>
     </div>
 
@@ -705,6 +736,34 @@
 </div>
 
 <script>
+    // ===== 登录检查 =====
+    const token = localStorage.getItem('token');
+    if (!token) {
+        window.location.href = '/login.html';
+    }
+
+    // ===== 用户信息 =====
+    const currentUsername = localStorage.getItem('username') || 'anonymous';
+    const currentNickname = localStorage.getItem('nickname') || 'anonymous';
+
+    // ===== 登出功能 =====
+    function logout() {
+        localStorage.removeItem('token');
+        localStorage.removeItem('username');
+        localStorage.removeItem('nickname');
+        window.location.href = '/login.html';
+    }
+
+    // ===== Token 带上的 fetch 包装 =====
+    async function authFetch(url, options = {}) {
+        const token = localStorage.getItem('token');
+        const headers = {
+            ...options.headers,
+            'Authorization': `Bearer ${token}`
+        };
+        return fetch(url, { ...options, headers });
+    }
+
     // ===== Theme =====
     function initTheme() {
         const saved = localStorage.getItem('theme') || 'dark';
@@ -722,6 +781,12 @@
         localStorage.setItem('theme', next);
     }
     initTheme();
+
+    // ===== 用户信息 =====
+    function initUserInfo() {
+        document.getElementById('userName').textContent = currentNickname || currentUsername;
+    }
+    initUserInfo();
 
     function initSidebarState() {
         const sidebar = document.getElementById('sidebar');
@@ -917,9 +982,14 @@
         let finalContent = '';
 
         try {
+            const token = localStorage.getItem('token');
             const res = await fetch('/api/agent/chat/stream', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'text/event-stream',
+                    'Authorization': `Bearer ${token}`
+                },
                 body: JSON.stringify({ conversationId: currentConvId, message, model: currentModel })
             });
 

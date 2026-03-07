@@ -1,6 +1,14 @@
 server:
   port: 8080
 
+# 日志配置
+logging:
+  level:
+    root: INFO
+  # 屏蔽 JAVA_TOOL_OPTIONS 提示
+  pattern:
+    console: "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+
 spring:
   profiles:
     active: ${SPRING_PROFILE:local}

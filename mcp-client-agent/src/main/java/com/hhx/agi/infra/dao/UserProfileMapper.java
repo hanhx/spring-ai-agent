@@ -12,5 +12,7 @@ public interface UserProfileMapper extends BaseMapper<UserProfilePO> {
 
     List<UserProfilePO> selectByUserId(@Param("userId") String userId);
 
+    List<UserProfilePO> selectByUserIdAndCategory(@Param("userId") String userId, @Param("category") String category);
+
     int upsert(@Param("po") UserProfilePO po);
 }

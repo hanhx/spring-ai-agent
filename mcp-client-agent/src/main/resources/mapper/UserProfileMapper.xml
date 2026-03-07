@@ -11,10 +11,18 @@
         ORDER BY id
     </select>
 
+    <select id="selectByUserIdAndCategory" resultType="com.hhx.agi.infra.po.UserProfilePO">
+        SELECT *
+        FROM user_profile
+        WHERE user_id = #{userId}
+          AND category = #{category}
+        ORDER BY id
+    </select>
+
     <insert id="upsert" parameterType="com.hhx.agi.infra.po.UserProfilePO"
             useGeneratedKeys="true" keyProperty="id">
-        INSERT INTO user_profile (user_id, profile_key, profile_value, source_message, created_at, updated_at)
-        VALUES (#{po.userId}, #{po.profileKey}, #{po.profileValue}, #{po.sourceMessage}, #{po.createdAt}, #{po.updatedAt})
+        INSERT INTO user_profile (user_id, category, profile_key, profile_value, source_message, created_at, updated_at)
+        VALUES (#{po.userId}, #{po.category}, #{po.profileKey}, #{po.profileValue}, #{po.sourceMessage}, #{po.createdAt}, #{po.updatedAt})
         ON DUPLICATE KEY UPDATE
             profile_value = VALUES(profile_value),
             source_message = VALUES(source_message),

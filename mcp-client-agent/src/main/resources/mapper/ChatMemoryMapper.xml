@@ -4,21 +4,24 @@
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.hhx.agi.infra.dao.ChatMemoryMapper">
 
-    <select id="selectByConversationId" resultType="com.hhx.agi.infra.po.ChatMemoryPO">
+    <select id="selectByUserIdAndConversationId" resultType="com.hhx.agi.infra.po.ChatMemoryPO">
         SELECT *
         FROM chat_memory
-        WHERE conversation_id = #{conversationId}
+        WHERE user_id = #{userId}
+          AND conversation_id = #{conversationId}
         ORDER BY id
     </select>
 
-    <delete id="deleteByConversationId">
+    <delete id="deleteByUserIdAndConversationId">
         DELETE FROM chat_memory
-        WHERE conversation_id = #{conversationId}
+        WHERE user_id = #{userId}
+          AND conversation_id = #{conversationId}
     </delete>
 
-    <select id="selectAllConversationIds" resultType="java.lang.String">
+    <select id="selectAllConversationIdsByUserId" resultType="java.lang.String">
         SELECT DISTINCT conversation_id
         FROM chat_memory
+        WHERE user_id = #{userId}
     </select>
 
 </mapper>

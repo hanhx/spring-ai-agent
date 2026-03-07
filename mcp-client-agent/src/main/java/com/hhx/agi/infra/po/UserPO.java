@@ -8,21 +8,17 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 @Data
-@TableName("user_profile")
-public class UserProfilePO {
+@TableName("users")
+public class UserPO {
 
     @TableId(type = IdType.AUTO)
     private Long id;
 
-    private String userId;
+    private String username;
 
-    private String category; // preference(偏好), knowledge(知识), context(上下文)
+    private String passwordHash;
 
-    private String profileKey;
-
-    private String profileValue;
-
-    private String sourceMessage;
+    private String nickname;
 
     private LocalDateTime createdAt;
 

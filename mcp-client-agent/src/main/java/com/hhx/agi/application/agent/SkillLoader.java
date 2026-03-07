@@ -30,7 +30,7 @@ public class SkillLoader {
     private static final Logger log = LoggerFactory.getLogger(SkillLoader.class);
 
     private final SkillRegistryMapper skillRegistryMapper;
-    private final List<SkillDefinition> skills;
+    private List<SkillDefinition> skills;
     private final Map<String, String> dbPrompts = new LinkedHashMap<>();
 
     public SkillLoader(SkillRegistryMapper skillRegistryMapper) {
@@ -40,6 +40,14 @@ public class SkillLoader {
 
     public List<SkillDefinition> getSkills() {
         return skills;
+    }
+
+    /**
+     * 重新加载所有 Skills（用于动态更新）
+     */
+    public void reload() {
+        this.skills = loadAllSkills();
+        log.info("[SkillLoader] Skills 重新加载完成，共 {} 个", skills.size());
     }
 
     private List<SkillDefinition> loadAllSkills() {
