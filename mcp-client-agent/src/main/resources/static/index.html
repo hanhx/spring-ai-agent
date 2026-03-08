@@ -249,6 +249,83 @@
             border-color: var(--text-muted);
         }
 
+        /* Actions dropdown */
+        .actions-dropdown {
+            position: absolute;
+            right: 60px;
+            display: inline-block;
+        }
+
+        .actions-btn {
+            background: none;
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            cursor: pointer;
+            padding: 6px 10px;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: background 0.2s, border-color 0.2s;
+        }
+
+        .actions-btn:hover {
+            background: var(--bg-hover);
+            border-color: var(--text-muted);
+        }
+
+        .actions-menu {
+            position: absolute;
+            top: 100%;
+            right: 0;
+            margin-top: 4px;
+            background: #2f2f2f;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            min-width: 140px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            z-index: 100;
+            display: none;
+        }
+
+        [data-theme="light"] .actions-menu {
+            background: #f7f7f8;
+        }
+
+        .actions-menu.show {
+            display: block;
+        }
+
+        .actions-menu a {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 14px;
+            color: var(--text-primary);
+            text-decoration: none;
+            font-size: 14px;
+            transition: background 0.2s;
+        }
+
+        .actions-menu a:hover {
+            background: var(--bg-hover);
+        }
+
+        .actions-menu a:first-child {
+            border-radius: 8px 8px 0 0;
+        }
+
+        .actions-menu a:last-child {
+            border-radius: 0 0 8px 8px;
+        }
+
+        .actions-menu a.disabled {
+            color: var(--text-muted);
+            cursor: not-allowed;
+        }
+
+        .actions-menu a.disabled:hover {
+            background: transparent;
+        }
+
         /* Model selector */
         .model-selector {
             position: absolute;
@@ -682,6 +759,15 @@
         <button class="sidebar-toggle" onclick="toggleSidebar()">
             <i class="fa-solid fa-bars"></i>
         </button>
+        <div class="actions-dropdown">
+            <button class="actions-btn" onclick="toggleActionsMenu()">
+                <i class="fa-solid fa-ellipsis"></i>
+            </button>
+            <div class="actions-menu" id="actionsMenu">
+                <a href="/skills.html"><i class="fa-solid fa-rocket"></i> Skills</a>
+                <a href="javascript:void(0)" class="disabled"><i class="fa-solid fa-gavel"></i> Rules</a>
+            </div>
+        </div>
         <button class="theme-toggle" onclick="window.location.href='/settings.html'" title="设置">
             <span>&#9881;</span>
         </button>
@@ -757,6 +843,21 @@
     // ===== 用户信息 =====
     const currentUsername = localStorage.getItem('username') || 'anonymous';
     const currentNickname = localStorage.getItem('nickname') || 'anonymous';
+
+    // ===== Actions 菜单 =====
+    function toggleActionsMenu() {
+        const menu = document.getElementById('actionsMenu');
+        menu.classList.toggle('show');
+    }
+
+    // 点击其他地方关闭菜单
+    document.addEventListener('click', function(e) {
+        const dropdown = document.querySelector('.actions-dropdown');
+        const menu = document.getElementById('actionsMenu');
+        if (dropdown && !dropdown.contains(e.target)) {
+            menu.classList.remove('show');
+        }
+    });
 
     // ===== 登出功能 =====
     function logout() {
