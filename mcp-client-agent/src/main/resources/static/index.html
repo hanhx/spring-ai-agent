@@ -748,7 +748,7 @@
     <div class="sidebar-footer">
         <div class="user-info">
             <span class="user-name" id="userName"></span>
-            <button class="logout-btn" onclick="logout()" title="登出">Exit</button>
+            <button class="logout-btn" onclick="logout()" title="登出"><i class="fa-solid fa-arrow-right-from-bracket"></i></button>
         </div>
     </div>
 </aside>
@@ -768,7 +768,7 @@
                 <a href="javascript:void(0)" class="disabled"><i class="fa-solid fa-gavel"></i> Rules</a>
             </div>
         </div>
-        <button class="theme-toggle" onclick="window.location.href='/settings.html'" title="设置">
+        <button class="theme-toggle" onclick="openSettingsModal()" title="设置">
             <span>&#9881;</span>
         </button>
     </div>
@@ -1585,23 +1585,41 @@
         </div>
         <div class="skills-modal-body">
             <div class="skills-toolbar">
-                <button class="btn btn-primary" onclick="openSkillCreateModal()">+ 新建</button>
-                <button class="btn btn-secondary" onclick="regenerateVectors()">重新生成向量</button>
+                <div class="toolbar-left">
+                    <input type="text" id="skillSearchInput" placeholder="搜索..." oninput="filterSkills()">
+                    <button class="btn btn-primary" onclick="filterSkills()">搜索</button>
+                </div>
+                <div class="toolbar-right">
+                    <button class="btn btn-secondary" onclick="openVectorTestModal()">向量测试</button>
+                    <button class="btn btn-primary" onclick="openSkillCreateModal()">+ 新建</button>
+                    <button class="btn btn-secondary" onclick="regenerateVectors()">重新生成向量</button>
+                </div>
             </div>
             <div id="skillsGrid" class="skills-grid"></div>
-            <div class="skills-test-section">
-                <h3>向量匹配测试</h3>
-                <div class="skills-test-input">
-                    <input type="text" id="skillTestQuery" placeholder="输入测试查询">
-                    <button class="btn btn-primary" onclick="testSkillMatch()">测试</button>
-                </div>
-                <div id="skillTestResults" class="skills-test-results hidden"></div>
-            </div>
         </div>
     </div>
 </div>
 
-<!-- Skill 编辑模态框 -->
+<!-- 向量搜索测试弹框 -->
+<div id="vectorTestModal" class="skills-modal-overlay" style="display:none;">
+    <div class="skills-modal" style="max-width:800px;height:auto;max-height:80vh;margin:40px auto;">
+        <div class="skills-modal-header">
+            <h2><i class="fa-solid fa-vector-square"></i> 向量匹配测试</h2>
+            <button class="skills-modal-close" onclick="closeVectorTestModal()">&times;</button>
+        </div>
+        <div class="skills-modal-body" style="max-width:800px;margin:0 auto;">
+            <div class="skills-toolbar" style="margin-bottom:16px;">
+                <div class="toolbar-left">
+                    <input type="text" id="vectorSearchInput" placeholder="输入查询文本..." onkeydown="if(event.key==='Enter')testVectorMatch()">
+                    <button class="btn btn-primary" onclick="testVectorMatch()">搜索</button>
+                </div>
+            </div>
+            <div id="vectorTestResults" class="skills-test-results hidden"></div>
+        </div>
+    </div>
+</div>
+
+<!-- 向量搜索测试弹框 -->
 <div id="skillEditModal" class="skills-modal-overlay" style="display:none;">
     <div class="skills-edit-modal">
         <div class="skills-modal-header">
@@ -1699,11 +1717,37 @@
         padding: 20px;
         overflow-y: auto;
         flex: 1;
+        max-width: 1200px;
+        margin: 0 auto;
+        width: 100%;
+        box-sizing: border-box;
     }
     .skills-toolbar {
         display: flex;
-        gap: 10px;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
         margin-bottom: 16px;
+    }
+    .toolbar-left, .toolbar-right {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .toolbar-left input,
+    .toolbar-right input {
+        padding: 8px 12px;
+        background: var(--bg-input);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        color: var(--text-primary);
+        font-size: 14px;
+    }
+    .toolbar-left input {
+        width: 140px;
+    }
+    .toolbar-right input {
+        width: 160px;
     }
     .btn {
         padding: 8px 16px;
@@ -1794,37 +1838,20 @@
         padding-top: 10px;
         border-top: 1px solid var(--border);
     }
-    .skills-test-section {
-        background: var(--bg-input);
-        border-radius: 12px;
-        padding: 16px;
-        border: 1px solid var(--border);
-    }
-    .skills-test-section h3 {
-        font-size: 14px;
-        margin-bottom: 12px;
-        color: var(--text-secondary);
-    }
-    .skills-test-input {
-        display: flex;
-        gap: 10px;
-        margin-bottom: 12px;
-    }
-    .skills-test-input input {
-        flex: 1;
-        padding: 10px 12px;
-        background: var(--bg-main);
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        color: var(--text-primary);
-        font-size: 14px;
-    }
     .skills-test-results {
-        background: var(--bg-main);
+        background: var(--bg-input);
         border-radius: 8px;
         padding: 12px;
+        margin-bottom: 16px;
+        border: 1px solid var(--border);
     }
     .skills-test-results.hidden { display: none; }
+    .test-results-header {
+        font-size: 12px;
+        color: var(--text-muted);
+        margin-bottom: 8px;
+        font-weight: 500;
+    }
     .skill-test-item {
         display: flex;
         justify-content: space-between;
@@ -1923,6 +1950,68 @@
         document.getElementById('skillsModal').style.display = 'none';
     }
 
+    function openVectorTestModal() {
+        document.getElementById('vectorSearchInput').value = '';
+        document.getElementById('vectorTestResults').classList.add('hidden');
+        document.getElementById('vectorTestModal').style.display = 'flex';
+    }
+
+    function closeVectorTestModal() {
+        document.getElementById('vectorTestModal').style.display = 'none';
+    }
+
+    async function testVectorMatch() {
+        const query = document.getElementById('vectorSearchInput').value.trim();
+        if (!query) return;
+        try {
+            const res = await fetch('/api/skills/test-match', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query, topK: 3 })
+            });
+            const data = await res.json();
+            const resultsDiv = document.getElementById('vectorTestResults');
+            resultsDiv.classList.remove('hidden');
+
+            if (data.results && data.results.length > 0) {
+                const sorted = data.results.sort((a, b) => b.score - a.score);
+                resultsDiv.innerHTML = `
+                    <div class="test-results-header">
+                        <span>向量匹配结果</span>
+                        <span style="color:var(--text-muted);font-weight:400;">${query}</span>
+                    </div>
+                    <div class="skills-grid" style="margin-bottom:0;">
+                        ${sorted.map(r => {
+                            const skill = skillsList.find(s => s.name === r.name) || {};
+                            return `
+                                <div class="skill-card">
+                                    <div class="skill-card-header">
+                                        <div class="skill-card-name">${escapeHtml(r.name)}</div>
+                                        <div class="skill-card-status">
+                                            <span class="skill-badge" style="background:rgba(16,163,127,0.15);color:#10a37f;">${r.score.toFixed(4)}</span>
+                                            ${skill.vector ? '<span class="skill-badge vector">向量</span>' : ''}
+                                            <span class="skill-badge ${skill.enabled ? 'enabled' : 'disabled'}">${skill.enabled ? '启用' : '禁用'}</span>
+                                        </div>
+                                    </div>
+                                    <div class="skill-card-desc">${escapeHtml(skill.description || '暂无描述')}</div>
+                                    ${skill.allowedTools ? `
+                                        <div class="skill-card-tools">
+                                            ${skill.allowedTools.split(/[,\s]+/).filter(t=>t).map(t => `<span class="skill-tool-tag">${escapeHtml(t)}</span>`).join('')}
+                                        </div>
+                                    ` : ''}
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                `;
+            } else {
+                resultsDiv.innerHTML = '<div style="color:var(--text-muted);font-size:14px;padding:12px;">无匹配结果</div>';
+            }
+        } catch (e) {
+            alert('测试失败: ' + e.message);
+        }
+    }
+
     async function loadSkills() {
         try {
             const res = await fetch('/api/skills');
@@ -1933,13 +2022,29 @@
         }
     }
 
-    function renderSkills() {
+    // 模糊搜索 - 本地过滤
+    function filterSkills() {
+        const query = document.getElementById('skillSearchInput').value.trim().toLowerCase();
+        if (!query) {
+            renderSkills();
+            return;
+        }
+        const filtered = skillsList.filter(skill => {
+            const name = (skill.name || '').toLowerCase();
+            const desc = (skill.description || '').toLowerCase();
+            return name.includes(query) || desc.includes(query);
+        });
+        renderSkills(filtered);
+    }
+
+    function renderSkills(filteredList = null) {
         const grid = document.getElementById('skillsGrid');
-        if (skillsList.length === 0) {
+        const list = filteredList || skillsList;
+        if (list.length === 0) {
             grid.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:20px;">暂无 Skills</div>';
             return;
         }
-        grid.innerHTML = skillsList.map(skill => `
+        grid.innerHTML = list.map(skill => `
             <div class="skill-card">
                 <div class="skill-card-header">
                     <div class="skill-card-name">${escapeHtml(skill.name)}</div>
@@ -2049,32 +2154,6 @@
         }
     }
 
-    async function testSkillMatch() {
-        const query = document.getElementById('skillTestQuery').value;
-        if (!query) return;
-        try {
-            const res = await fetch('/api/skills/test-match', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ query, topK: 5 })
-            });
-            const data = await res.json();
-            const resultsDiv = document.getElementById('skillTestResults');
-            resultsDiv.classList.remove('hidden');
-            resultsDiv.innerHTML = data.results.map(r => `
-                <div class="skill-test-item">
-                    <div>
-                        <span>${escapeHtml(r.name)}</span>
-                        <span class="skill-test-method">${r.method}</span>
-                    </div>
-                    <span class="skill-test-score">${r.score.toFixed(4)}</span>
-                </div>
-            `).join('');
-        } catch (e) {
-            alert('测试失败: ' + e.message);
-        }
-    }
-
     // 点击遮罩关闭
     document.getElementById('skillsModal').addEventListener('click', function(e) {
         if (e.target === this) closeSkillsModal();
@@ -2082,6 +2161,449 @@
     document.getElementById('skillEditModal').addEventListener('click', function(e) {
         if (e.target === this) closeSkillEditModal();
     });
+    document.getElementById('vectorTestModal').addEventListener('click', function(e) {
+        if (e.target === this) closeVectorTestModal();
+    });
+</script>
+
+<!-- 设置模态框 -->
+<div id="settingsModal" class="settings-modal-overlay" style="display:none;">
+    <div class="settings-modal">
+        <div class="settings-modal-header">
+            <h2><i class="fa-solid fa-gear"></i> 设置</h2>
+            <button class="settings-modal-close" onclick="closeSettingsModal()">&times;</button>
+        </div>
+        <div class="settings-modal-body">
+            <div class="settings-list">
+                <div class="settings-item" onclick="openThemeModal()">
+                    <div class="settings-item-left">
+                        <div class="settings-item-icon"><i class="fa-solid fa-palette"></i></div>
+                        <div class="settings-item-content">
+                            <div class="settings-item-title">外观主题</div>
+                            <div class="settings-item-desc">切换深色/浅色模式</div>
+                        </div>
+                    </div>
+                    <div class="settings-item-right">
+                        <span class="settings-item-value" id="themeDisplayValue">深色模式</span>
+                        <i class="fa-solid fa-chevron-right"></i>
+                    </div>
+                </div>
+                <div class="settings-item" onclick="openPasswordModal()">
+                    <div class="settings-item-left">
+                        <div class="settings-item-icon"><i class="fa-solid fa-lock"></i></div>
+                        <div class="settings-item-content">
+                            <div class="settings-item-title">修改密码</div>
+                            <div class="settings-item-desc">更新登录密码</div>
+                        </div>
+                    </div>
+                    <div class="settings-item-right">
+                        <i class="fa-solid fa-chevron-right"></i>
+                    </div>
+                </div>
+                <div class="settings-item" onclick="openProfileModal()">
+                    <div class="settings-item-left">
+                        <div class="settings-item-icon"><i class="fa-solid fa-user"></i></div>
+                        <div class="settings-item-content">
+                            <div class="settings-item-title">账户信息</div>
+                            <div class="settings-item-desc">用户名: <span id="settingsUsername"></span></div>
+                        </div>
+                    </div>
+                    <div class="settings-item-right">
+                        <i class="fa-solid fa-chevron-right"></i>
+                    </div>
+                </div>
+                <div class="settings-item settings-item-danger" onclick="logout()">
+                    <div class="settings-item-left">
+                        <div class="settings-item-icon"><i class="fa-solid fa-sign-out-alt"></i></div>
+                        <div class="settings-item-content">
+                            <div class="settings-item-title">退出登录</div>
+                        </div>
+                    </div>
+                    <div class="settings-item-right">
+                        <i class="fa-solid fa-chevron-right"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 主题设置子模态框 -->
+<div id="themeSubModal" class="settings-sub-overlay" style="display:none;">
+    <div class="settings-sub-modal">
+        <div class="settings-sub-header">
+            <h3>外观主题</h3>
+            <button class="settings-modal-close" onclick="closeThemeModal()">&times;</button>
+        </div>
+        <div class="settings-sub-body">
+            <div class="form-group">
+                <label>选择主题</label>
+                <select id="themeSelect">
+                    <option value="dark">深色模式</option>
+                    <option value="light">浅色模式</option>
+                </select>
+            </div>
+        </div>
+        <div class="settings-sub-footer">
+            <button class="btn btn-secondary" onclick="closeThemeModal()">取消</button>
+            <button class="btn btn-primary" onclick="saveTheme()">保存</button>
+        </div>
+    </div>
+</div>
+
+<!-- 修改密码子模态框 -->
+<div id="passwordSubModal" class="settings-sub-overlay" style="display:none;">
+    <div class="settings-sub-modal">
+        <div class="settings-sub-header">
+            <h3>修改密码</h3>
+            <button class="settings-modal-close" onclick="closePasswordModal()">&times;</button>
+        </div>
+        <div class="settings-sub-body">
+            <div class="form-group">
+                <label>旧密码</label>
+                <input type="password" id="oldPassword" placeholder="请输入旧密码">
+            </div>
+            <div class="form-group">
+                <label>新密码</label>
+                <input type="password" id="newPassword" placeholder="请输入新密码（至少6位）">
+            </div>
+            <div class="form-group">
+                <label>确认新密码</label>
+                <input type="password" id="confirmPassword" placeholder="请再次输入新密码">
+            </div>
+            <div class="settings-error" id="passwordError"></div>
+        </div>
+        <div class="settings-sub-footer">
+            <button class="btn btn-secondary" onclick="closePasswordModal()">取消</button>
+            <button class="btn btn-primary" onclick="savePassword()">保存</button>
+        </div>
+    </div>
+</div>
+
+<!-- 账户信息子模态框 -->
+<div id="profileSubModal" class="settings-sub-overlay" style="display:none;">
+    <div class="settings-sub-modal">
+        <div class="settings-sub-header">
+            <h3>账户信息</h3>
+            <button class="settings-modal-close" onclick="closeProfileModal()">&times;</button>
+        </div>
+        <div class="settings-sub-body">
+            <div class="form-group">
+                <label>用户名</label>
+                <input type="text" id="profileUsername" readonly style="opacity:0.6;">
+            </div>
+            <div class="form-group">
+                <label>昵称</label>
+                <input type="text" id="profileNickname" placeholder="设置昵称">
+            </div>
+        </div>
+        <div class="settings-sub-footer">
+            <button class="btn btn-secondary" onclick="closeProfileModal()">关闭</button>
+            <button class="btn btn-primary" onclick="saveProfile()">保存</button>
+        </div>
+    </div>
+</div>
+
+<style>
+/* 设置模态框样式 */
+.settings-modal-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1001;
+    backdrop-filter: blur(4px);
+}
+.settings-modal {
+    background: var(--bg-main);
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+.settings-modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+}
+.settings-modal-header h2 {
+    font-size: 18px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.settings-modal-close {
+    background: none;
+    border: none;
+    font-size: 24px;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+.settings-modal-close:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+.settings-modal-body {
+    padding: 20px;
+    flex: 1;
+    overflow-y: auto;
+}
+.settings-list {
+    max-width: 600px;
+    margin: 0 auto;
+}
+.settings-item {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 12px;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    transition: background 0.2s;
+}
+.settings-item:hover {
+    background: var(--bg-hover);
+}
+.settings-item-left {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+.settings-item-icon {
+    width: 40px;
+    height: 40px;
+    background: var(--bg-main);
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    color: var(--accent);
+}
+.settings-item-content {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.settings-item-title {
+    font-size: 15px;
+    font-weight: 500;
+}
+.settings-item-desc {
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+.settings-item-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-muted);
+}
+.settings-item-value {
+    font-size: 13px;
+    color: var(--accent);
+}
+.settings-item-danger {
+    border-color: rgba(239,68,68,0.3);
+}
+.settings-item-danger .settings-item-title {
+    color: #ef4444;
+}
+.settings-item-danger .settings-item-icon {
+    color: #ef4444;
+}
+.settings-item-danger:hover {
+    background: rgba(239,68,68,0.1);
+}
+
+/* 子模态框样式 */
+.settings-sub-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1002;
+}
+.settings-sub-modal {
+    background: var(--bg-main);
+    border-radius: 16px;
+    width: 90%;
+    max-width: 400px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    border: 1px solid var(--border);
+}
+.settings-sub-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+}
+.settings-sub-header h3 {
+    font-size: 16px;
+    font-weight: 600;
+}
+.settings-sub-body {
+    padding: 20px;
+}
+.settings-sub-footer {
+    display: flex;
+    gap: 10px;
+    padding: 16px 20px;
+    border-top: 1px solid var(--border);
+    justify-content: flex-end;
+}
+.settings-error {
+    color: #ef4444;
+    font-size: 13px;
+    margin-top: 8px;
+    display: none;
+}
+</style>
+
+<script>
+// ===== 设置模态框 =====
+function openSettingsModal() {
+    // 实时从 localStorage 读取最新值
+    const theme = localStorage.getItem('theme') || 'dark';
+    const username = localStorage.getItem('username') || 'anonymous';
+    document.getElementById('themeDisplayValue').textContent = theme === 'dark' ? '深色模式' : '浅色模式';
+    document.getElementById('settingsUsername').textContent = username;
+    document.getElementById('settingsModal').style.display = 'flex';
+}
+
+function closeSettingsModal() {
+    document.getElementById('settingsModal').style.display = 'none';
+}
+
+// 主题设置
+function openThemeModal() {
+    const theme = localStorage.getItem('theme') || 'dark';
+    document.getElementById('themeSelect').value = theme;
+    document.getElementById('themeSubModal').style.display = 'flex';
+}
+
+function closeThemeModal() {
+    document.getElementById('themeSubModal').style.display = 'none';
+}
+
+function saveTheme() {
+    const theme = document.getElementById('themeSelect').value;
+    applyTheme(theme);
+    localStorage.setItem('theme', theme);
+    document.getElementById('themeDisplayValue').textContent = theme === 'dark' ? '深色模式' : '浅色模式';
+    closeThemeModal();
+}
+
+// 密码修改
+function openPasswordModal() {
+    document.getElementById('oldPassword').value = '';
+    document.getElementById('newPassword').value = '';
+    document.getElementById('confirmPassword').value = '';
+    document.getElementById('passwordError').style.display = 'none';
+    document.getElementById('passwordSubModal').style.display = 'flex';
+}
+
+function closePasswordModal() {
+    document.getElementById('passwordSubModal').style.display = 'none';
+}
+
+async function savePassword() {
+    const oldPwd = document.getElementById('oldPassword').value;
+    const newPwd = document.getElementById('newPassword').value;
+    const confirmPwd = document.getElementById('confirmPassword').value;
+    const errorEl = document.getElementById('passwordError');
+
+    if (!oldPwd || !newPwd) {
+        errorEl.textContent = '请填写所有密码字段';
+        errorEl.style.display = 'block';
+        return;
+    }
+    if (newPwd.length < 6) {
+        errorEl.textContent = '新密码至少6位';
+        errorEl.style.display = 'block';
+        return;
+    }
+    if (newPwd !== confirmPwd) {
+        errorEl.textContent = '两次输入的密码不一致';
+        errorEl.style.display = 'block';
+        return;
+    }
+
+    try {
+        const token = localStorage.getItem('token');
+        const username = localStorage.getItem('username');
+        const res = await fetch('/api/auth/password', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
+                'X-Username': username
+            },
+            body: JSON.stringify({ oldPassword: oldPwd, newPassword: newPwd })
+        });
+
+        if (!res.ok) {
+            const data = await res.json();
+            throw new Error(data.message || '修改失败');
+        }
+
+        alert('密码修改成功，请重新登录');
+        localStorage.clear();
+        window.location.href = '/login.html';
+    } catch (err) {
+        errorEl.textContent = err.message;
+        errorEl.style.display = 'block';
+    }
+}
+
+// 账户信息
+function openProfileModal() {
+    // 实时从 localStorage 读取最新值
+    const username = localStorage.getItem('username') || 'anonymous';
+    const nickname = localStorage.getItem('nickname') || username;
+    document.getElementById('profileUsername').value = username;
+    document.getElementById('profileNickname').value = nickname;
+    document.getElementById('profileSubModal').style.display = 'flex';
+}
+
+function closeProfileModal() {
+    document.getElementById('profileSubModal').style.display = 'none';
+}
+
+function saveProfile() {
+    const nickname = document.getElementById('profileNickname').value;
+    const username = localStorage.getItem('username') || 'anonymous';
+    localStorage.setItem('nickname', nickname);
+    document.getElementById('userName').textContent = nickname || username;
+    closeProfileModal();
+}
+
+// 点击遮罩关闭
+document.getElementById('settingsModal').addEventListener('click', function(e) {
+    if (e.target === this) closeSettingsModal();
+});
+document.getElementById('themeSubModal').addEventListener('click', function(e) {
+    if (e.target === this) closeThemeModal();
+});
+document.getElementById('passwordSubModal').addEventListener('click', function(e) {
+    if (e.target === this) closePasswordModal();
+});
+document.getElementById('profileSubModal').addEventListener('click', function(e) {
+    if (e.target === this) closeProfileModal();
+});
 </script>
 
 </body>
