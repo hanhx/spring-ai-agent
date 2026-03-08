@@ -764,7 +764,7 @@
                 <i class="fa-solid fa-ellipsis"></i>
             </button>
             <div class="actions-menu" id="actionsMenu">
-                <a href="/skills.html"><i class="fa-solid fa-rocket"></i> Skills</a>
+                <a href="javascript:void(0)" onclick="openSkillsModal()"><i class="fa-solid fa-rocket"></i> Skills</a>
                 <a href="javascript:void(0)" class="disabled"><i class="fa-solid fa-gavel"></i> Rules</a>
             </div>
         </div>
@@ -1575,5 +1575,505 @@
         background: #c0392b;
     }
 </style>
+
+<!-- Skills 模态框 -->
+<div id="skillsModal" class="skills-modal-overlay" style="display:none;">
+    <div class="skills-modal">
+        <div class="skills-modal-header">
+            <h2><i class="fa-solid fa-rocket"></i> Skills 管理</h2>
+            <button class="skills-modal-close" onclick="closeSkillsModal()">&times;</button>
+        </div>
+        <div class="skills-modal-body">
+            <div class="skills-toolbar">
+                <button class="btn btn-primary" onclick="openSkillCreateModal()">+ 新建</button>
+                <button class="btn btn-secondary" onclick="regenerateVectors()">重新生成向量</button>
+            </div>
+            <div id="skillsGrid" class="skills-grid"></div>
+            <div class="skills-test-section">
+                <h3>向量匹配测试</h3>
+                <div class="skills-test-input">
+                    <input type="text" id="skillTestQuery" placeholder="输入测试查询">
+                    <button class="btn btn-primary" onclick="testSkillMatch()">测试</button>
+                </div>
+                <div id="skillTestResults" class="skills-test-results hidden"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Skill 编辑模态框 -->
+<div id="skillEditModal" class="skills-modal-overlay" style="display:none;">
+    <div class="skills-edit-modal">
+        <div class="skills-modal-header">
+            <h2 id="skillEditTitle">新建 Skill</h2>
+            <button class="skills-modal-close" onclick="closeSkillEditModal()">&times;</button>
+        </div>
+        <form id="skillEditForm">
+            <input type="hidden" id="skillEditId">
+            <div class="form-group">
+                <label>名称 *</label>
+                <input type="text" id="skillName" required placeholder="如：code_review">
+            </div>
+            <div class="form-group">
+                <label>描述</label>
+                <textarea id="skillDescription" placeholder="用于向量匹配的描述"></textarea>
+            </div>
+            <div class="form-group">
+                <label>允许的工具（逗号分隔）</label>
+                <input type="text" id="skillTools" placeholder="如：search,execute_code">
+            </div>
+            <div class="form-group">
+                <label>Prompt 模板</label>
+                <textarea id="skillPrompt" placeholder="System prompt，支持 Markdown" rows="6"></textarea>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>优先级</label>
+                    <input type="number" id="skillPriority" value="0">
+                </div>
+                <div class="form-group">
+                    <label>状态</label>
+                    <select id="skillEnabled">
+                        <option value="true">启用</option>
+                        <option value="false">禁用</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="closeSkillEditModal()">取消</button>
+                <button type="submit" class="btn btn-primary">保存</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<style>
+    /* Skills 模态框样式 */
+    .skills-modal-overlay {
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background: rgba(0,0,0,0.6);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1001;
+        backdrop-filter: blur(4px);
+    }
+    .skills-modal {
+        background: var(--bg-main);
+        border-radius: 16px;
+        width: 90%;
+        max-width: 800px;
+        max-height: 85vh;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        border: 1px solid var(--border);
+    }
+    .skills-modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 16px 20px;
+        border-bottom: 1px solid var(--border);
+    }
+    .skills-modal-header h2 {
+        font-size: 18px;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .skills-modal-close {
+        background: none;
+        border: none;
+        font-size: 24px;
+        color: var(--text-muted);
+        cursor: pointer;
+        padding: 4px 8px;
+        border-radius: 4px;
+    }
+    .skills-modal-close:hover {
+        background: var(--bg-hover);
+        color: var(--text-primary);
+    }
+    .skills-modal-body {
+        padding: 20px;
+        overflow-y: auto;
+        flex: 1;
+    }
+    .skills-toolbar {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 16px;
+    }
+    .btn {
+        padding: 8px 16px;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: 500;
+        transition: all 0.2s;
+    }
+    .btn-primary {
+        background: var(--accent);
+        color: white;
+    }
+    .btn-primary:hover { background: var(--accent-hover); }
+    .btn-secondary {
+        background: var(--bg-input);
+        color: var(--text-primary);
+        border: 1px solid var(--border);
+    }
+    .btn-secondary:hover { background: var(--bg-hover); }
+    .btn-danger {
+        background: #ef4444;
+        color: white;
+    }
+    .btn-danger:hover { background: #dc2626; }
+    .btn-sm {
+        padding: 5px 10px;
+        font-size: 12px;
+    }
+    .skills-grid {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        margin-bottom: 20px;
+    }
+    .skill-card {
+        background: var(--bg-input);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 14px;
+    }
+    .skill-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 8px;
+    }
+    .skill-card-name {
+        font-weight: 600;
+        font-size: 15px;
+    }
+    .skill-card-status {
+        display: flex;
+        gap: 6px;
+    }
+    .skill-badge {
+        padding: 3px 8px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 500;
+    }
+    .skill-badge.enabled { background: rgba(16,163,127,0.15); color: #10a37f; }
+    .skill-badge.disabled { background: rgba(239,68,68,0.15); color: #ef4444; }
+    .skill-badge.vector { background: rgba(59,130,246,0.15); color: #3b82f6; }
+    .skill-card-desc {
+        font-size: 13px;
+        color: var(--text-secondary);
+        margin-bottom: 8px;
+        line-height: 1.4;
+    }
+    .skill-card-tools {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        margin-bottom: 10px;
+    }
+    .skill-tool-tag {
+        background: var(--bg-main);
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 11px;
+        color: var(--text-muted);
+    }
+    .skill-card-actions {
+        display: flex;
+        gap: 8px;
+        padding-top: 10px;
+        border-top: 1px solid var(--border);
+    }
+    .skills-test-section {
+        background: var(--bg-input);
+        border-radius: 12px;
+        padding: 16px;
+        border: 1px solid var(--border);
+    }
+    .skills-test-section h3 {
+        font-size: 14px;
+        margin-bottom: 12px;
+        color: var(--text-secondary);
+    }
+    .skills-test-input {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 12px;
+    }
+    .skills-test-input input {
+        flex: 1;
+        padding: 10px 12px;
+        background: var(--bg-main);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        color: var(--text-primary);
+        font-size: 14px;
+    }
+    .skills-test-results {
+        background: var(--bg-main);
+        border-radius: 8px;
+        padding: 12px;
+    }
+    .skills-test-results.hidden { display: none; }
+    .skill-test-item {
+        display: flex;
+        justify-content: space-between;
+        padding: 6px 0;
+        border-bottom: 1px solid var(--border);
+        font-size: 13px;
+    }
+    .skill-test-item:last-child { border-bottom: none; }
+    .skill-test-score {
+        color: var(--accent);
+        font-family: monospace;
+    }
+    .skill-test-method {
+        font-size: 11px;
+        color: var(--text-muted);
+        background: var(--bg-input);
+        padding: 2px 6px;
+        border-radius: 4px;
+        margin-left: 6px;
+    }
+
+    /* Skill 编辑模态框 */
+    .skills-edit-modal {
+        background: var(--bg-main);
+        border-radius: 16px;
+        width: 90%;
+        max-width: 500px;
+        max-height: 85vh;
+        overflow-y: auto;
+        box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        border: 1px solid var(--border);
+    }
+    .form-group {
+        margin-bottom: 14px;
+    }
+    .form-group label {
+        display: block;
+        font-size: 13px;
+        color: var(--text-secondary);
+        margin-bottom: 6px;
+    }
+    .form-group input,
+    .form-group textarea,
+    .form-group select {
+        width: 100%;
+        padding: 10px 12px;
+        background: var(--bg-input);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        color: var(--text-primary);
+        font-size: 14px;
+    }
+    .form-group textarea {
+        resize: vertical;
+        font-family: monospace;
+    }
+    .form-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+    }
+    .form-actions {
+        display: flex;
+        gap: 10px;
+        justify-content: flex-end;
+        margin-top: 16px;
+        padding-top: 16px;
+        border-top: 1px solid var(--border);
+    }
+</style>
+
+<script>
+    // ===== Skills 模态框 =====
+    let skillsList = [];
+
+    function openSkillsModal() {
+        document.getElementById('skillsModal').style.display = 'flex';
+        loadSkills();
+        // 关闭 actions 菜单
+        document.getElementById('actionsMenu').classList.remove('show');
+    }
+
+    function closeSkillsModal() {
+        document.getElementById('skillsModal').style.display = 'none';
+    }
+
+    async function loadSkills() {
+        try {
+            const res = await fetch('/api/skills');
+            skillsList = await res.json();
+            renderSkills();
+        } catch (e) {
+            console.error('加载 skills 失败:', e);
+        }
+    }
+
+    function renderSkills() {
+        const grid = document.getElementById('skillsGrid');
+        if (skillsList.length === 0) {
+            grid.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:20px;">暂无 Skills</div>';
+            return;
+        }
+        grid.innerHTML = skillsList.map(skill => `
+            <div class="skill-card">
+                <div class="skill-card-header">
+                    <div class="skill-card-name">${escapeHtml(skill.name)}</div>
+                    <div class="skill-card-status">
+                        ${skill.vector ? '<span class="skill-badge vector">向量</span>' : ''}
+                        <span class="skill-badge ${skill.enabled ? 'enabled' : 'disabled'}">${skill.enabled ? '启用' : '禁用'}</span>
+                    </div>
+                </div>
+                <div class="skill-card-desc">${escapeHtml(skill.description || '暂无描述')}</div>
+                ${skill.allowedTools ? `
+                    <div class="skill-card-tools">
+                        ${skill.allowedTools.split(/[,\s]+/).filter(t=>t).map(t => `<span class="skill-tool-tag">${escapeHtml(t)}</span>`).join('')}
+                    </div>
+                ` : ''}
+                <div class="skill-card-actions">
+                    <button class="btn btn-secondary btn-sm" onclick="openSkillEditModal(${skill.id})">编辑</button>
+                    <button class="btn btn-secondary btn-sm" onclick="toggleSkillEnabled(${skill.id})">${skill.enabled ? '禁用' : '启用'}</button>
+                    <button class="btn btn-danger btn-sm" onclick="deleteSkill(${skill.id})">删除</button>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    function openSkillCreateModal() {
+        document.getElementById('skillEditTitle').textContent = '新建 Skill';
+        document.getElementById('skillEditForm').reset();
+        document.getElementById('skillEditId').value = '';
+        document.getElementById('skillEditModal').style.display = 'flex';
+    }
+
+    function openSkillEditModal(id) {
+        const skill = skillsList.find(s => s.id === id);
+        if (!skill) return;
+        document.getElementById('skillEditTitle').textContent = '编辑 Skill';
+        document.getElementById('skillEditId').value = skill.id;
+        document.getElementById('skillName').value = skill.name;
+        document.getElementById('skillDescription').value = skill.description || '';
+        document.getElementById('skillTools').value = skill.allowedTools || '';
+        document.getElementById('skillPrompt').value = skill.promptBody || '';
+        document.getElementById('skillPriority').value = skill.priority || 0;
+        document.getElementById('skillEnabled').value = skill.enabled ? 'true' : 'false';
+        document.getElementById('skillEditModal').style.display = 'flex';
+    }
+
+    function closeSkillEditModal() {
+        document.getElementById('skillEditModal').style.display = 'none';
+    }
+
+    document.getElementById('skillEditForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const id = document.getElementById('skillEditId').value;
+        const data = {
+            name: document.getElementById('skillName').value,
+            description: document.getElementById('skillDescription').value,
+            allowedTools: document.getElementById('skillTools').value,
+            promptBody: document.getElementById('skillPrompt').value,
+            priority: parseInt(document.getElementById('skillPriority').value) || 0,
+            enabled: document.getElementById('skillEnabled').value === 'true'
+        };
+        try {
+            const url = id ? `/api/skills/${id}` : '/api/skills';
+            const method = id ? 'PUT' : 'POST';
+            const res = await fetch(url, {
+                method,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            if (res.ok) {
+                closeSkillEditModal();
+                loadSkills();
+            } else {
+                alert('保存失败');
+            }
+        } catch (e) {
+            alert('保存失败: ' + e.message);
+        }
+    });
+
+    async function toggleSkillEnabled(id) {
+        try {
+            const res = await fetch(`/api/skills/${id}/toggle`, { method: 'POST' });
+            if (res.ok) loadSkills();
+        } catch (e) {
+            alert('操作失败');
+        }
+    }
+
+    async function deleteSkill(id) {
+        if (!confirm('确定要删除这个 Skill 吗？')) return;
+        try {
+            const res = await fetch(`/api/skills/${id}`, { method: 'DELETE' });
+            if (res.ok) loadSkills();
+        } catch (e) {
+            alert('删除失败');
+        }
+    }
+
+    async function regenerateVectors() {
+        if (!confirm('确定要重新生成所有向量吗？')) return;
+        try {
+            const res = await fetch('/api/skills/regenerate-vectors', { method: 'POST' });
+            const data = await res.json();
+            alert(data.message || '生成成功');
+            loadSkills();
+        } catch (e) {
+            alert('生成失败: ' + e.message);
+        }
+    }
+
+    async function testSkillMatch() {
+        const query = document.getElementById('skillTestQuery').value;
+        if (!query) return;
+        try {
+            const res = await fetch('/api/skills/test-match', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query, topK: 5 })
+            });
+            const data = await res.json();
+            const resultsDiv = document.getElementById('skillTestResults');
+            resultsDiv.classList.remove('hidden');
+            resultsDiv.innerHTML = data.results.map(r => `
+                <div class="skill-test-item">
+                    <div>
+                        <span>${escapeHtml(r.name)}</span>
+                        <span class="skill-test-method">${r.method}</span>
+                    </div>
+                    <span class="skill-test-score">${r.score.toFixed(4)}</span>
+                </div>
+            `).join('');
+        } catch (e) {
+            alert('测试失败: ' + e.message);
+        }
+    }
+
+    // 点击遮罩关闭
+    document.getElementById('skillsModal').addEventListener('click', function(e) {
+        if (e.target === this) closeSkillsModal();
+    });
+    document.getElementById('skillEditModal').addEventListener('click', function(e) {
+        if (e.target === this) closeSkillEditModal();
+    });
+</script>
+
 </body>
 </html>
