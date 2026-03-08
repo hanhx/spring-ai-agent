@@ -2155,15 +2155,25 @@
         document.getElementById('confirmModal').style.display = 'none';
     }
 
+    function showToast(message, type = 'success') {
+        const toast = document.getElementById('toast');
+        toast.textContent = message;
+        toast.className = 'toast ' + type;
+        toast.style.display = 'block';
+        setTimeout(() => {
+            toast.style.display = 'none';
+        }, 3000);
+    }
+
     async function regenerateVectors() {
         showConfirmModal('确定要重新生成所有向量吗？', async () => {
             try {
                 const res = await fetch('/api/skills/regenerate-vectors', { method: 'POST' });
                 const data = await res.json();
-                alert(data.message || '生成成功');
+                showToast(data.message || '生成成功', 'success');
                 loadSkills();
             } catch (e) {
-                alert('生成失败: ' + e.message);
+                showToast('生成失败: ' + e.message, 'error');
             }
         });
     }
@@ -2405,6 +2415,29 @@
     display: flex;
     gap: 12px;
     justify-content: center;
+}
+/* Toast 提示样式 */
+.toast {
+    position: fixed;
+    top: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--bg-main);
+    color: var(--text-primary);
+    padding: 12px 24px;
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+    z-index: 1003;
+    font-size: 14px;
+    border: 1px solid var(--border);
+}
+.toast.success {
+    border-color: #10a37f;
+    background: rgba(16,163,127,0.1);
+}
+.toast.error {
+    border-color: #e54d2e;
+    background: rgba(229,77,46,0.1);
 }
 .settings-list {
     max-width: 600px;
