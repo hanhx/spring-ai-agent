@@ -2142,16 +2142,30 @@
         }
     }
 
+    function showConfirmModal(message, onConfirm) {
+        document.getElementById('confirmModalMessage').textContent = message;
+        document.getElementById('confirmModalBtn').onclick = function() {
+            closeConfirmModal();
+            onConfirm();
+        };
+        document.getElementById('confirmModal').style.display = 'flex';
+    }
+
+    function closeConfirmModal() {
+        document.getElementById('confirmModal').style.display = 'none';
+    }
+
     async function regenerateVectors() {
-        if (!confirm('确定要重新生成所有向量吗？')) return;
-        try {
-            const res = await fetch('/api/skills/regenerate-vectors', { method: 'POST' });
-            const data = await res.json();
-            alert(data.message || '生成成功');
-            loadSkills();
-        } catch (e) {
-            alert('生成失败: ' + e.message);
-        }
+        showConfirmModal('确定要重新生成所有向量吗？', async () => {
+            try {
+                const res = await fetch('/api/skills/regenerate-vectors', { method: 'POST' });
+                const data = await res.json();
+                alert(data.message || '生成成功');
+                loadSkills();
+            } catch (e) {
+                alert('生成失败: ' + e.message);
+            }
+        });
     }
 
     // 点击遮罩关闭
@@ -2354,6 +2368,43 @@
     padding: 20px;
     flex: 1;
     overflow-y: auto;
+}
+/* 确认弹框样式 */
+.confirm-modal-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1002;
+    backdrop-filter: blur(4px);
+}
+.confirm-modal-content {
+    background: var(--bg-main);
+    border-radius: 12px;
+    padding: 24px;
+    max-width: 360px;
+    text-align: center;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+}
+.confirm-modal-icon {
+    font-size: 48px;
+    margin-bottom: 16px;
+}
+.confirm-modal-title {
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+.confirm-modal-message {
+    color: var(--text-muted);
+    margin-bottom: 24px;
+}
+.confirm-modal-actions {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
 }
 .settings-list {
     max-width: 600px;
@@ -2604,7 +2655,28 @@ document.getElementById('passwordSubModal').addEventListener('click', function(e
 document.getElementById('profileSubModal').addEventListener('click', function(e) {
     if (e.target === this) closeProfileModal();
 });
+document.getElementById('confirmModal').addEventListener('click', function(e) {
+    if (e.target === this) closeConfirmModal();
+});
 </script>
+
+<!-- 确认弹框 -->
+<div id="confirmModal" class="confirm-modal-overlay" style="display:none;">
+    <div class="confirm-modal">
+        <div class="confirm-modal-content">
+            <div class="confirm-modal-icon">⚠️</div>
+            <div class="confirm-modal-title">确认操作</div>
+            <div class="confirm-modal-message" id="confirmModalMessage">确定要执行此操作吗？</div>
+            <div class="confirm-modal-actions">
+                <button class="btn btn-secondary" onclick="closeConfirmModal()">取消</button>
+                <button class="btn btn-danger" id="confirmModalBtn">确定</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Toast 提示 -->
+<div id="toast" class="toast" style="display:none;"></div>
 
 </body>
 </html>
