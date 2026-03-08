@@ -1,17 +1,15 @@
 package com.hhx.agi.application.service;
 
 import com.hhx.agi.application.agent.SkillEmbeddingIndex;
+import com.hhx.agi.application.agent.SkillLoader;
 import com.hhx.agi.infra.client.DashScopeEmbeddingClient;
 import com.hhx.agi.infra.dao.SkillRegistryMapper;
-import com.hhx.agi.infra.handler.VectorTypeHandler;
 import com.hhx.agi.infra.po.SkillRegistryPO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.util.List;
 
 /**
@@ -26,14 +24,17 @@ public class SkillService {
     private final SkillRegistryMapper skillRegistryMapper;
     private final SkillEmbeddingIndex skillEmbeddingIndex;
     private final DashScopeEmbeddingClient embeddingClient;
+    private final SkillLoader skillLoader;
 
     public SkillService(
             SkillRegistryMapper skillRegistryMapper,
             SkillEmbeddingIndex skillEmbeddingIndex,
-            DashScopeEmbeddingClient embeddingClient) {
+            DashScopeEmbeddingClient embeddingClient,
+            SkillLoader skillLoader) {
         this.skillRegistryMapper = skillRegistryMapper;
         this.skillEmbeddingIndex = skillEmbeddingIndex;
         this.embeddingClient = embeddingClient;
+        this.skillLoader = skillLoader;
     }
 
     /**
@@ -86,6 +87,7 @@ public class SkillService {
 
         skillRegistryMapper.insert(skill);
         log.info("[SkillService] 创建 Skill: id={}, name={}", skill.getId(), skill.getName());
+        skillLoader.reload();
 
         return skill;
     }
@@ -128,6 +130,7 @@ public class SkillService {
 
         skillRegistryMapper.updateById(existing);
         log.info("[SkillService] 更新 Skill: id={}, name={}", id, existing.getName());
+        skillLoader.reload();
 
         return existing;
     }
@@ -139,6 +142,7 @@ public class SkillService {
     public void delete(Long id) {
         skillRegistryMapper.deleteById(id);
         log.info("[SkillService] 删除 Skill: id={}", id);
+        skillLoader.reload();
     }
 
     /**
@@ -154,6 +158,7 @@ public class SkillService {
         skill.setEnabled(!skill.getEnabled());
         skillRegistryMapper.updateById(skill);
         log.info("[SkillService] 切换 Skill 状态: id={}, enabled={}", id, skill.getEnabled());
+        skillLoader.reload();
 
         return skill;
     }
