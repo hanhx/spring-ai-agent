@@ -2,6 +2,7 @@ package com.example.mcp.server.config;
 
 import com.example.mcp.server.tool.DatabaseTools;
 import com.example.mcp.server.tool.OrderTools;
+import com.example.mcp.server.tool.PdfTools;
 import org.springframework.ai.tool.ToolCallbackProvider;
 import org.springframework.ai.tool.method.MethodToolCallbackProvider;
 import org.springframework.context.annotation.Bean;
@@ -26,6 +27,13 @@ public class McpToolConfig {
     public ToolCallbackProvider orderToolProvider(OrderTools orderTools) {
         return MethodToolCallbackProvider.builder()
                 .toolObjects(orderTools)
+                .build();
+    }
+
+    @Bean
+    public ToolCallbackProvider pdfToolProvider(PdfTools pdfTools) {
+        return MethodToolCallbackProvider.builder()
+                .toolObjects(pdfTools)
                 .build();
     }
 }

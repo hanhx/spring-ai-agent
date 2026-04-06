@@ -136,7 +136,7 @@ public class SkillExecutor {
         Flux<PlanActionEvent> executePhase = executePhase(ctx);
         Flux<PlanActionEvent> finalPhase = finalPhase(ctx);
 
-        return Flux.concat(preload.thenMany(planPhase), executePhase, finalPhase)
+        return Flux.concat(preload.thenMany(explorePhase(ctx)), planPhase, executePhase, finalPhase)
                 .doFinally(signal -> com.hhx.agi.infra.config.UserContext.clear())
                 .onErrorResume(e -> {
                     log.error("[SkillExecutor] Plan&Execute Skill [{}] 出错: {}", skill.name(), e.getMessage(), e);
@@ -154,6 +154,26 @@ public class SkillExecutor {
             log.info("[SkillExecutor] 预加载 Skill [{}] prompt({}字) + {} 个工具",
                     ctx.skill().name(), ctx.cachedPrompt().length(), ctx.cachedTools().length);
         }).subscribeOn(Schedulers.boundedElastic()).then();
+    }
+
+    /** Phase 0.5: 信息预取 —— 在规划前调用只读工具收集现有数据（参考 Claude Code ExploreAgent） */
+    private Flux<PlanActionEvent> explorePhase(ExecutionContext ctx) {
+        return Flux.concat(
+                Mono.just(PlanActionEvent.planning("正在预取相关信息...")),
+                Mono.<PlanActionEvent>fromRunnable(() -> {
+                    try {
+                        String result = invokeExplorer(ctx);
+                        if (result != null && !result.isBlank()) {
+                            ctx.setExplorationContext(result);
+                            log.info("[Explore] 预取完成: {}字", result.length());
+                        } else {
+                            log.info("[Explore] 无需预取，跳过");
+                        }
+                    } catch (Exception e) {
+                        log.warn("[Explore] 预取异常，跳过: {}", e.getMessage());
+                    }
+                }).subscribeOn(Schedulers.boundedElastic())
+        );
     }
 
     /** Phase 1: 生成初始计划 */
@@ -281,19 +301,73 @@ public class SkillExecutor {
         log.info("[SkillExecutor] 检测到追问步骤(第{}次)，终止执行流，返回问题: {}", count, question);
         ctx.terminateWithAskUser();
         chatMemory.add(ctx.conversationId(), new AssistantMessage(question));
-        return Flux.just(PlanActionEvent.result(question), PlanActionEvent.done());
+        return Flux.just(PlanActionEvent.askUser(question), PlanActionEvent.result(question), PlanActionEvent.done());
     }
 
     // ==================== LLM 角色调用 ====================
+
+    /** Explorer —— 规划前调用只读工具预取相关信息 */
+    private String invokeExplorer(ExecutionContext ctx) {
+        if (ctx.cachedTools() == null || ctx.cachedTools().length == 0) {
+            return "";
+        }
+        String toolsInfo = toolResolver.formatToolSignatures(ctx.cachedTools());
+        String prompt = """
+                你是信息预取规划器。根据用户问题和可用工具，判断规划前需要先查询哪些只读信息。
+
+                严格输出规则：
+                1) 只列出只读查询工具（get/query/search/list/fetch 类，不包含 create/update/delete 等写操作）
+                2) 每行一个工具调用，格式：工具名: {JSON参数}
+                3) 最多 2 个工具调用
+                4) 无需预取时，只输出：SKIP
+                5) 不要任何解释，不要 markdown，不要编号
+
+                可用工具（含参数签名）:
+                %s
+
+                用户问题: %s
+
+                请直接输出：
+                """.formatted(toolsInfo, ctx.enrichedMessage());
+
+        String output;
+        try {
+            output = chatClientBuilder.build().prompt().user(prompt).call().content();
+        } catch (Exception e) {
+            log.warn("[Explorer] LLM调用失败: {}", e.getMessage());
+            return "";
+        }
+        if (output == null || output.isBlank() || output.trim().equalsIgnoreCase("SKIP")) {
+            return "";
+        }
+
+        StringBuilder sb = new StringBuilder();
+        for (String line : output.split("\n")) {
+            String normalized = normalizePlannerLine(line);
+            if (normalized.isEmpty()) continue;
+            DirectToolStep step = parseDirectToolStep(normalized, ctx.cachedTools());
+            if (step == null) continue;
+            try {
+                String result = step.tool().call(step.toolInputJson());
+                sb.append("- ").append(normalized).append("\n  结果: ").append(result).append("\n");
+                log.info("[Explorer] 工具调用: {} → {}字", normalized, result.length());
+            } catch (Exception e) {
+                log.warn("[Explorer] 工具调用失败: {} - {}", normalized, e.getMessage());
+            }
+        }
+        return sb.toString().trim();
+    }
 
     /** Planner —— 生成执行计划 */
     private List<String> invokePlanner(ExecutionContext ctx, List<ExecutionContext.StepResult> completed) {
         String completedInfo = completed.isEmpty() ? "无" :
                 completed.stream().map(s -> "- " + s.step() + " → " + s.result()).collect(Collectors.joining("\n"));
         String toolsInfo = toolResolver.formatToolSignatures(ctx.cachedTools());
+        String explorationInfo = (ctx.explorationContext() != null && !ctx.explorationContext().isBlank())
+                ? ctx.explorationContext() : "无";
 
         String prompt = """
-                你是一个任务规划器。根据用户问题、可用工具和已完成步骤，生成「机器可执行」计划。
+                你是一个任务规划器。根据用户问题、可用工具、预取信息和已完成步骤，生成「机器可执行」计划。
 
                 严格输出规则：
                 1) 每行一个步骤，不要编号，不要解释，不要 markdown
@@ -301,17 +375,20 @@ public class SkillExecutor {
                    例如：JavaSDKMCPClient_getWeatherForecast: {"city":"上海","dayOffset":1}
                 3) 若缺少必填参数，必须输出：追问用户：<具体问题>
                 4) 最后一步必须是：整理结果并回复用户
-                5) 禁止输出“我认为/建议/说明”这类描述性文字
+                5) 禁止输出"我认为/建议/说明"这类描述性文字
                 6) 不能编造不存在的工具名
+                7) 预取信息中已有的数据无需重复查询
 
                 可用工具（含参数签名）:
                 %s
                 用户问题: %s
+                预取的相关信息（直接参考，无需重复调用工具）：
+                %s
                 已完成步骤:
                 %s
 
                 请直接输出步骤：
-                """.formatted(toolsInfo, ctx.enrichedMessage(), completedInfo);
+                """.formatted(toolsInfo, ctx.enrichedMessage(), explorationInfo, completedInfo);
 
         ChatClient.Builder builder = chatClientBuilder.clone();
         if (ctx.model() != null && !ctx.model().isBlank()) {

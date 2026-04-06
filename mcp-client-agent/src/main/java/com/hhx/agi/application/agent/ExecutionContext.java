@@ -27,6 +27,9 @@ public class ExecutionContext {
     private String cachedPrompt;
     private ToolCallback[] cachedTools;
 
+    /** 信息预取阶段收集的上下文（规划前只读工具调用结果） */
+    private String explorationContext;
+
     /** 执行状态 */
     private final List<StepResult> completedSteps = new ArrayList<>();
     private final List<List<String>> planHistory = new ArrayList<>();
@@ -56,6 +59,7 @@ public class ExecutionContext {
     public String userId() { return userId; }
     public String cachedPrompt() { return cachedPrompt; }
     public ToolCallback[] cachedTools() { return cachedTools; }
+    public String explorationContext() { return explorationContext; }
     public List<StepResult> completedSteps() { return completedSteps; }
     public int stepIndex() { return stepIndex; }
     public int replanCount() { return replanCount; }
@@ -67,6 +71,7 @@ public class ExecutionContext {
 
     public void setCachedPrompt(String prompt) { this.cachedPrompt = prompt; }
     public void setCachedTools(ToolCallback[] tools) { this.cachedTools = tools; }
+    public void setExplorationContext(String explorationContext) { this.explorationContext = explorationContext; }
 
     public void addCompletedStep(String step, String result) {
         completedSteps.add(new StepResult(step, result));

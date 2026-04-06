@@ -1,7 +1,5 @@
 package com.hhx.agi.application.agent;
 
-import com.hhx.agi.infra.dao.PendingIntentMapper;
-import com.hhx.agi.infra.po.PendingIntentPO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -13,6 +11,8 @@ import reactor.core.scheduler.Schedulers;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 多意图执行器 —— 串行执行多个 Skill，跟踪追问状态，汇总结果
@@ -30,38 +30,23 @@ public class MultiIntentExecutor {
 
     private final SkillExecutor executor;
     private final ChatClient.Builder chatClientBuilder;
-    private final PendingIntentMapper pendingIntentMapper;
+    private final PendingIntentStore pendingIntentStore;
 
-    public MultiIntentExecutor(SkillExecutor executor, ChatClient.Builder chatClientBuilder, PendingIntentMapper pendingIntentMapper) {
+    public MultiIntentExecutor(SkillExecutor executor, ChatClient.Builder chatClientBuilder, PendingIntentStore pendingIntentStore) {
         this.executor = executor;
         this.chatClientBuilder = chatClientBuilder;
-        this.pendingIntentMapper = pendingIntentMapper;
+        this.pendingIntentStore = pendingIntentStore;
     }
 
-    /** 取出并清除待办意图（从数据库） */
+    /** 取出并清除待办意图（内存存储） */
     public List<SkillIntent> popPending(String conversationId) {
-        List<PendingIntentPO> pendingPos = pendingIntentMapper.selectByConversationId(conversationId);
-        List<SkillIntent> pending = pendingPos.stream()
-                .map(po -> new SkillIntent(po.getSkillName(), po.getSubTask()))
-                .toList();
-        if (!pending.isEmpty()) {
-            pendingIntentMapper.deleteByConversationId(conversationId);
-            log.info("[MultiIntent] 从数据库取出 {} 个待办意图", pending.size());
-        }
+        List<SkillIntent> pending = pendingIntentStore.popPending(conversationId);
         return pending.isEmpty() ? null : pending;
     }
 
-    /** 保存待办意图到数据库 */
+    /** 保存待办意图（内存存储） */
     private void savePending(String conversationId, List<SkillIntent> intents) {
-        pendingIntentMapper.deleteByConversationId(conversationId);
-        for (SkillIntent intent : intents) {
-            PendingIntentPO po = new PendingIntentPO();
-            po.setConversationId(conversationId);
-            po.setSkillName(intent.skillName());
-            po.setSubTask(intent.subTask());
-            pendingIntentMapper.insert(po);
-        }
-        log.info("[MultiIntent] 保存 {} 个待办意图到数据库", intents.size());
+        pendingIntentStore.savePending(conversationId, intents);
     }
 
     /** 合并新意图与待办意图（按 skillName 去重） */
@@ -77,23 +62,23 @@ public class MultiIntentExecutor {
     }
 
     /**
-     * 串行执行多个意图，追问时保存待办，完成后汇总
+     * 并发执行多个意图，完成后汇总结果
+     *
+     * 并发策略：单请求内的多个意图均视为独立任务，通过 Flux.merge 并发运行。
+     * 追问检测使用结构化 ask_user 事件而非推断 boolean 状态。
      */
     public Flux<PlanActionEvent> execute(String conversationId, List<SkillIntent> intents,
                                           Map<String, SkillDefinition> skillMap, SkillDefinition fallback, String model, String userId) {
         log.info("[MultiIntent] 共 {} 个子任务, model: {}, userId: {}", intents.size(), model, userId);
         int total = intents.size();
 
-        final boolean[] askUserDetected = {false};
-        final List<String> skillResults = new ArrayList<>();
+        AtomicBoolean askUserDetected = new AtomicBoolean(false);
+        CopyOnWriteArrayList<String> skillResults = new CopyOnWriteArrayList<>();
 
-        List<Flux<PlanActionEvent>> fluxes = new ArrayList<>();
-        fluxes.add(Flux.just(PlanActionEvent.planning(
-                String.format("💡 识别到 %d 个任务，开始逐个处理...", total))));
-
+        // 构建每个意图的执行 Flux
+        List<Flux<PlanActionEvent>> skillFluxes = new ArrayList<>();
         for (int i = 0; i < intents.size(); i++) {
             final int idx = i + 1;
-            final int intentIndex = i;
             SkillIntent intent = intents.get(i);
             SkillDefinition skill = skillMap.getOrDefault(intent.skillName(), fallback);
             if (skill == null) {
@@ -103,57 +88,55 @@ public class MultiIntentExecutor {
             final String skillName = skill.name();
             final String subTask = intent.subTask();
 
-            fluxes.add(Flux.defer(() -> {
-                if (askUserDetected[0]) {
-                    savePending(conversationId, new ArrayList<>(intents.subList(intentIndex, intents.size())));
-                    return Flux.empty();
-                }
-
-                final boolean[] hasAction = {false};
-                return Flux.concat(
-                        Flux.just(PlanActionEvent.skillStart(idx, total, skillName, subTask)),
-                        executor.planAndExecute(skill, conversationId, subTask, model, userId)
-                                .doOnNext(event -> {
-                                    if ("action".equals(event.type())) hasAction[0] = true;
-                                    if ("result".equals(event.type()) && event.content() != null) {
-                                        skillResults.add("【" + subTask + "】\n" + event.content());
-                                    }
-                                })
-                                .doOnComplete(() -> {
-                                    if (!hasAction[0]) {
-                                        askUserDetected[0] = true;
-                                        log.info("[MultiIntent] Skill [{}] 追问终止", skillName);
-                                    }
-                                })
-                );
-            }));
+            skillFluxes.add(
+                Flux.concat(
+                    Flux.just(PlanActionEvent.skillStart(idx, total, skillName, subTask)),
+                    executor.planAndExecute(skill, conversationId, subTask, model, userId)
+                        .doOnNext(event -> {
+                            if ("ask_user".equals(event.type())) {
+                                askUserDetected.set(true);
+                                log.info("[MultiIntent] Skill [{}] 追问终止", skillName);
+                            }
+                            if ("result".equals(event.type()) && event.content() != null) {
+                                skillResults.add("【" + subTask + "】\n" + event.content());
+                            }
+                        })
+                )
+            );
         }
 
-        // 汇总阶段
-        fluxes.add(Flux.defer(() -> {
-            if (askUserDetected[0] || skillResults.size() <= 1) return Flux.empty();
+        Flux<PlanActionEvent> header = Flux.just(
+            PlanActionEvent.planning(String.format("💡 识别到 %d 个任务，并发处理中...", total))
+        );
+
+        // 并发运行所有 Skill
+        Flux<PlanActionEvent> allSkills = Flux.merge(skillFluxes);
+
+        // 汇总阶段：所有 Skill 完成后才运行
+        Flux<PlanActionEvent> aggregation = Flux.defer(() -> {
+            if (askUserDetected.get() || skillResults.size() <= 1) return Flux.empty();
             log.info("[MultiIntent] 汇总 {} 个结果", skillResults.size());
             return Flux.concat(
-                    Flux.just(PlanActionEvent.planning("📝 正在汇总所有任务结果...")),
-                    Mono.fromCallable(() -> {
-                        String allResults = String.join("\n\n---\n\n", skillResults);
-                        String prompt = """
-                                你是一个智能助手。用户一次提出了多个问题，以下是各个子任务的执行结果。
-                                请将所有结果整合成一个完整、连贯的回复，不要遗漏任何子任务的信息。
-                                使用中文回复，语气友好专业。
-                                
-                                各子任务结果：
-                                %s
-                                
-                                请输出整合后的完整回复：
-                                """.formatted(allResults);
-                        return PlanActionEvent.result(
-                                chatClientBuilder.build().prompt().user(prompt).call().content());
-                    }).subscribeOn(Schedulers.boundedElastic()),
-                    Flux.just(PlanActionEvent.done())
+                Flux.just(PlanActionEvent.planning("📝 正在汇总所有任务结果...")),
+                Mono.fromCallable(() -> {
+                    String allResults = String.join("\n\n---\n\n", skillResults);
+                    String prompt = """
+                            你是一个智能助手。用户一次提出了多个问题，以下是各个子任务的执行结果。
+                            请将所有结果整合成一个完整、连贯的回复，不要遗漏任何子任务的信息。
+                            使用中文回复，语气友好专业。
+                            
+                            各子任务结果：
+                            %s
+                            
+                            请输出整合后的完整回复：
+                            """.formatted(allResults);
+                    return PlanActionEvent.result(
+                        chatClientBuilder.build().prompt().user(prompt).call().content());
+                }).subscribeOn(Schedulers.boundedElastic()),
+                Flux.just(PlanActionEvent.done())
             );
-        }));
+        });
 
-        return Flux.concat(fluxes);
+        return Flux.concat(header, allSkills, aggregation);
     }
 }
