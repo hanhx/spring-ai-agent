@@ -16,6 +16,7 @@ import java.util.List;
  * - action:    正在执行某个步骤（真正调用工具）
  * - observe:   观察步骤执行结果
  * - replan:    根据观察结果重新规划
+ * - ask_user:  需要用户补充信息（结构化追问信号）
  * - result:    最终回复
  * - error:     执行出错
  * - done:      全部完成
@@ -64,6 +65,11 @@ public record PlanActionEvent(
     /** 重新规划（附带新步骤列表） */
     public static PlanActionEvent replan(String reason, List<String> newSteps) {
         return new PlanActionEvent("replan", reason, null, newSteps.size(), null, newSteps, null);
+    }
+
+    /** 需要用户补充信息（结构化追问信号，供调用方可靠性检测而非推断） */
+    public static PlanActionEvent askUser(String question) {
+        return new PlanActionEvent("ask_user", question, null, null, null, null, null);
     }
 
     /** 最终回复 */
