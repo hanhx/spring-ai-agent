@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hhx.agi.application.agent.model.SkillDefinition;
 import com.hhx.agi.application.agent.skill.SkillLoader;
-import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.definition.DefaultToolDefinition;
 import org.springframework.ai.tool.definition.ToolDefinition;
@@ -21,7 +20,6 @@ import java.util.stream.Collectors;
 public class SkillToolCallback implements ToolCallback {
 
     public static final String TOOL_NAME = "SkillTool";
-    public static final String CONTEXT_KEY = "loadedSkill";
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
@@ -65,7 +63,7 @@ public class SkillToolCallback implements ToolCallback {
     }
 
     @Override
-    public String call(String toolInput, ToolContext toolContext) {
+    public String call(String toolInput, org.springframework.ai.chat.model.ToolContext toolContext) {
         try {
             JsonNode root = OBJECT_MAPPER.readTree(toolInput == null || toolInput.isBlank() ? "{}" : toolInput);
             String skillName = readText(root, "skillName");
@@ -83,9 +81,6 @@ public class SkillToolCallback implements ToolCallback {
             }
 
             String prompt = skillLoader.loadPrompt(skill);
-            if (toolContext != null) {
-                toolContext.getContext().put(CONTEXT_KEY, skill);
-            }
 
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("success", true);
@@ -96,7 +91,43 @@ public class SkillToolCallback implements ToolCallback {
             result.put("message", "Skill 已加载，请严格遵循 prompt，并只使用 allowedTools 中的 MCP 工具。若信息不足，直接追问用户。");
             return OBJECT_MAPPER.writeValueAsString(result);
         } catch (Exception e) {
-            return error("SkillTool 执行失败: " + e.getMessage());
+            return error("SkillTool 执行失败: " + describeException(e));
+        }
+    }
+
+    public SkillDefinition loadedSkillFromResult(String toolResult) {
+        try {
+            JsonNode root = OBJECT_MAPPER.readTree(toolResult == null || toolResult.isBlank() ? "{}" : toolResult);
+            if (!root.path("success").asBoolean(false)) {
+                return null;
+            }
+            String skillName = readText(root, "skillName");
+            return findSkill(skillName);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    public boolean isSkillTool(String toolName) {
+        return TOOL_NAME.equals(toolName);
+    }
+
+    public String toDisplayResult(String toolResult) {
+        try {
+            JsonNode root = OBJECT_MAPPER.readTree(toolResult == null || toolResult.isBlank() ? "{}" : toolResult);
+            boolean success = root.path("success").asBoolean(false);
+            if (success) {
+                String skillName = readText(root, "skillName");
+                String description = readText(root, "description");
+                if (description != null && !description.isBlank()) {
+                    return "Skill 已加载: " + skillName + " - " + description;
+                }
+                return "Skill 已加载: " + skillName;
+            }
+            String error = readText(root, "error");
+            return error == null || error.isBlank() ? "Skill 加载失败。" : "Skill 加载失败: " + error;
+        } catch (Exception ignored) {
+            return toolResult;
         }
     }
 
@@ -131,6 +162,13 @@ public class SkillToolCallback implements ToolCallback {
     private String readText(JsonNode root, String field) {
         JsonNode node = root.get(field);
         return node == null || node.isNull() ? null : node.asText();
+    }
+
+    private String describeException(Exception e) {
+        if (e.getMessage() != null && !e.getMessage().isBlank()) {
+            return e.getMessage();
+        }
+        return e.getClass().getSimpleName();
     }
 
     private String error(String message) {

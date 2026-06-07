@@ -167,10 +167,11 @@ public class AgenticLoopExecutor {
                     } else {
                         consecutiveFailures = 0;
                     }
-                    events.add(AgentStreamEvent.toolCallDone(totalToolCalls, MAX_TOOL_CALLS, toolCall.name(), result));
+                    events.add(AgentStreamEvent.toolCallDone(totalToolCalls, MAX_TOOL_CALLS, toolCall.name(), displayToolResult(toolCall.name(), result)));
 
-                    Object loaded = toolContext.remove(SkillToolCallback.CONTEXT_KEY);
-                    if (loaded instanceof SkillDefinition skill) {
+                    SkillDefinition loaded = loadedSkillFromToolResult(toolCall.name(), result);
+                    if (loaded != null) {
+                        SkillDefinition skill = loaded;
                         loadedSkill = skill;
                         ToolCallback[] skillTools = toolResolver.resolveTools(skill);
                         activeTools = concat(skillToolCallback, askUserToolCallback, skillTools);
@@ -288,6 +289,20 @@ public class AgenticLoopExecutor {
         }
         String text = result.toLowerCase();
         return text.startsWith("执行失败:") || text.contains("\"success\":false") || text.contains("exception");
+    }
+
+    private SkillDefinition loadedSkillFromToolResult(String toolName, String result) {
+        if (skillToolCallback.isSkillTool(toolName)) {
+            return skillToolCallback.loadedSkillFromResult(result);
+        }
+        return null;
+    }
+
+    private String displayToolResult(String toolName, String result) {
+        if (skillToolCallback.isSkillTool(toolName)) {
+            return skillToolCallback.toDisplayResult(result);
+        }
+        return result;
     }
 
     private String enrichWithHistory(String conversationId, String userMessage) {
