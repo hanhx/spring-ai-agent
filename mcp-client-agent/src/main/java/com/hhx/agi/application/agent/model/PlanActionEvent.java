@@ -1,4 +1,4 @@
-package com.hhx.agi.application.agent;
+package com.hhx.agi.application.agent.model;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 

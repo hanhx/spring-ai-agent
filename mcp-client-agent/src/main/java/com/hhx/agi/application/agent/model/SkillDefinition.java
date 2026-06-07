@@ -1,4 +1,4 @@
-package com.hhx.agi.application.agent;
+package com.hhx.agi.application.agent.model;
 
 import java.util.List;
 

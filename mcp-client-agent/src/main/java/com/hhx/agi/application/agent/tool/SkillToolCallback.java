@@ -1,7 +1,9 @@
-package com.hhx.agi.application.agent;
+package com.hhx.agi.application.agent.tool;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.hhx.agi.application.agent.model.SkillDefinition;
+import com.hhx.agi.application.agent.skill.SkillLoader;
 import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.definition.DefaultToolDefinition;

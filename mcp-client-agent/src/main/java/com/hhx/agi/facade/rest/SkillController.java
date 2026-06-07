@@ -1,6 +1,6 @@
 package com.hhx.agi.facade.rest;
 
-import com.hhx.agi.application.agent.SkillEmbeddingIndex;
+import com.hhx.agi.application.agent.skill.SkillEmbeddingIndex;
 import com.hhx.agi.application.service.SkillService;
 import com.hhx.agi.infra.po.SkillRegistryPO;
 import org.springframework.http.ResponseEntity;

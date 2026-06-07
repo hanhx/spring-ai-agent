@@ -1,4 +1,4 @@
-package com.hhx.agi.application.agent;
+package com.hhx.agi.application.agent.model;
 
 /**
  * 多意图识别结果 —— 一个用户消息可能包含多个意图，每个意图对应一个 Skill 和子任务描述

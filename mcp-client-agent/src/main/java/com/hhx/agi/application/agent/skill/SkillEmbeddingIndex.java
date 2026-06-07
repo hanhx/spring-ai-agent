@@ -1,5 +1,6 @@
-package com.hhx.agi.application.agent;
+package com.hhx.agi.application.agent.skill;
 
+import com.hhx.agi.application.agent.model.SkillDefinition;
 import com.hhx.agi.infra.client.DashScopeEmbeddingClient;
 import com.hhx.agi.infra.dao.SkillRegistryMapper;
 import com.hhx.agi.infra.po.SkillRegistryPO;

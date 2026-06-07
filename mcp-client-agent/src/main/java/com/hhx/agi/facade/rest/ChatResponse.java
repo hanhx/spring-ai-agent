@@ -1,6 +1,6 @@
 package com.hhx.agi.facade.rest;
 
-import com.hhx.agi.application.agent.SkillResponse;
+import com.hhx.agi.application.agent.model.SkillResponse;
 
 public record ChatResponse(
         String conversationId,

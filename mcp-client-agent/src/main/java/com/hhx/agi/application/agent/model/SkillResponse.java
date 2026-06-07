@@ -1,4 +1,4 @@
-package com.hhx.agi.application.agent;
+package com.hhx.agi.application.agent.model;
 
 /**
  * Skill 执行响应

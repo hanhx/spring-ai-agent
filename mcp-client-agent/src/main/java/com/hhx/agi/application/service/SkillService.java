@@ -1,7 +1,7 @@
 package com.hhx.agi.application.service;
 
-import com.hhx.agi.application.agent.SkillEmbeddingIndex;
-import com.hhx.agi.application.agent.SkillLoader;
+import com.hhx.agi.application.agent.skill.SkillEmbeddingIndex;
+import com.hhx.agi.application.agent.skill.SkillLoader;
 import com.hhx.agi.infra.client.DashScopeEmbeddingClient;
 import com.hhx.agi.infra.dao.SkillRegistryMapper;
 import com.hhx.agi.infra.po.SkillRegistryPO;

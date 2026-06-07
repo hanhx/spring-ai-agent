@@ -2,10 +2,10 @@ package com.hhx.agi.facade.rest;
 
 import com.hhx.agi.infra.config.McpConnectionManager;
 import com.hhx.agi.infra.config.UserContext;
-import com.hhx.agi.application.agent.PlanActionEvent;
-import com.hhx.agi.application.agent.SkillEmbeddingIndex;
-import com.hhx.agi.application.agent.SkillResponse;
-import com.hhx.agi.application.agent.SkillRouter;
+import com.hhx.agi.application.agent.model.PlanActionEvent;
+import com.hhx.agi.application.agent.skill.SkillEmbeddingIndex;
+import com.hhx.agi.application.agent.model.SkillResponse;
+import com.hhx.agi.application.agent.router.SkillRouter;
 import com.hhx.agi.application.service.ChatApplicationService;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;

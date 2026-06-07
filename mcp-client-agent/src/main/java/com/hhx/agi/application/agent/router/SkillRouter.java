@@ -1,5 +1,14 @@
-package com.hhx.agi.application.agent;
+package com.hhx.agi.application.agent.router;
 
+import com.hhx.agi.application.agent.execution.MultiIntentExecutor;
+import com.hhx.agi.application.agent.execution.SkillExecutor;
+import com.hhx.agi.application.agent.execution.ToolLoopExecutor;
+import com.hhx.agi.application.agent.model.PlanActionEvent;
+import com.hhx.agi.application.agent.model.SkillDefinition;
+import com.hhx.agi.application.agent.model.SkillIntent;
+import com.hhx.agi.application.agent.model.SkillResponse;
+import com.hhx.agi.application.agent.skill.SkillEmbeddingIndex;
+import com.hhx.agi.application.agent.skill.SkillLoader;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

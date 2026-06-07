@@ -1,5 +1,6 @@
-package com.hhx.agi.application.agent;
+package com.hhx.agi.application.agent.execution;
 
+import com.hhx.agi.application.agent.model.SkillDefinition;
 import org.springframework.ai.tool.ToolCallback;
 
 import java.util.ArrayList;

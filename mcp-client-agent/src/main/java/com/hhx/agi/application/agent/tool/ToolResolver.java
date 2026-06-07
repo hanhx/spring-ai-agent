@@ -1,5 +1,6 @@
-package com.hhx.agi.application.agent;
+package com.hhx.agi.application.agent.tool;
 
+import com.hhx.agi.application.agent.model.SkillDefinition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.tool.ToolCallback;

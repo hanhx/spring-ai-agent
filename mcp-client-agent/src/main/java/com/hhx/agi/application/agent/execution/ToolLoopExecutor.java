@@ -1,7 +1,10 @@
-package com.hhx.agi.application.agent;
+package com.hhx.agi.application.agent.execution;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.hhx.agi.application.agent.model.PlanActionEvent;
+import com.hhx.agi.application.agent.model.SkillDefinition;
+import com.hhx.agi.application.agent.tool.AskUserToolCallback;
+import com.hhx.agi.application.agent.tool.SkillToolCallback;
+import com.hhx.agi.application.agent.tool.ToolResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.memory.ChatMemory;
@@ -15,9 +18,6 @@ import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.model.tool.ToolCallingChatOptions;
 import org.springframework.ai.tool.ToolCallback;
-import org.springframework.ai.tool.definition.DefaultToolDefinition;
-import org.springframework.ai.tool.definition.ToolDefinition;
-import org.springframework.ai.tool.metadata.ToolMetadata;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -42,21 +42,20 @@ public class ToolLoopExecutor {
     private static final int MAX_TOOL_CALLS = 20;
     private static final int MAX_CONSECUTIVE_FAILURES = 3;
     private static final String DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash";
-    private static final String ASK_USER_TOOL_NAME = "AskUser";
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private final ChatModel chatModel;
     private final ChatMemory chatMemory;
     private final ToolResolver toolResolver;
     private final SkillToolCallback skillToolCallback;
-    private final ToolCallback askUserToolCallback = new AskUserToolCallback();
+    private final AskUserToolCallback askUserToolCallback;
 
     public ToolLoopExecutor(ChatModel chatModel, ChatMemory chatMemory, ToolResolver toolResolver,
-                            SkillToolCallback skillToolCallback) {
+                            SkillToolCallback skillToolCallback, AskUserToolCallback askUserToolCallback) {
         this.chatModel = chatModel;
         this.chatMemory = chatMemory;
         this.toolResolver = toolResolver;
         this.skillToolCallback = skillToolCallback;
+        this.askUserToolCallback = askUserToolCallback;
     }
 
     public Flux<PlanActionEvent> execute(String conversationId, String userMessage, String model, String userId) {
@@ -101,7 +100,7 @@ public class ToolLoopExecutor {
                         finalAnswer = "已完成处理，但模型未返回有效文本。";
                     }
                     chatMemory.add(conversationId, new AssistantMessage(finalAnswer));
-                    if (isLikelyAskUserResponse(finalAnswer)) {
+                    if (askUserToolCallback.isLikelyAskUserResponse(finalAnswer)) {
                         events.add(PlanActionEvent.askUser(finalAnswer));
                     }
                     events.add(PlanActionEvent.result(finalAnswer));
@@ -126,8 +125,8 @@ public class ToolLoopExecutor {
                     String result;
                     events.add(PlanActionEvent.actionStart(totalToolCalls, MAX_TOOL_CALLS, toolCall.name()));
 
-                    if (ASK_USER_TOOL_NAME.equals(toolCall.name())) {
-                        result = extractAskUserQuestion(toolCall.arguments());
+                    if (askUserToolCallback.isAskUserTool(toolCall.name())) {
+                        result = askUserToolCallback.extractQuestion(toolCall.arguments());
                         events.add(PlanActionEvent.actionDone(totalToolCalls, MAX_TOOL_CALLS, toolCall.name(), result));
                         chatMemory.add(conversationId, new AssistantMessage(result));
                         events.add(PlanActionEvent.askUser(result));
@@ -275,85 +274,6 @@ public class ToolLoopExecutor {
         }
         String text = result.toLowerCase();
         return text.startsWith("执行失败:") || text.contains("\"success\":false") || text.contains("exception");
-    }
-
-    private String extractAskUserQuestion(String toolInput) {
-        try {
-            JsonNode root = OBJECT_MAPPER.readTree(toolInput == null || toolInput.isBlank() ? "{}" : toolInput);
-            String question = readText(root, "question");
-            if (question == null) {
-                question = readText(root, "message");
-            }
-            if (question != null && !question.isBlank()) {
-                return question.trim();
-            }
-        } catch (Exception e) {
-            log.warn("[ToolLoop] AskUser 参数解析失败: {}", e.getMessage());
-        }
-        return "请补充完成该任务所需的信息。";
-    }
-
-    private boolean isLikelyAskUserResponse(String text) {
-        if (text == null || text.isBlank()) {
-            return false;
-        }
-        String normalized = text.trim();
-        if (normalized.length() > 300 || normalized.contains("还有其他")) {
-            return false;
-        }
-        return normalized.contains("请提供")
-                || normalized.contains("请补充")
-                || normalized.contains("请告知")
-                || normalized.contains("请确认")
-                || normalized.contains("请问您想")
-                || normalized.contains("需要您提供")
-                || normalized.contains("哪个城市")
-                || normalized.contains("订单号")
-                || normalized.contains("退款原因")
-                || normalized.contains("PDF文件路径")
-                || normalized.contains("pdf文件路径");
-    }
-
-    private String readText(JsonNode root, String field) {
-        JsonNode node = root.get(field);
-        return node == null || node.isNull() ? null : node.asText();
-    }
-
-    private static final class AskUserToolCallback implements ToolCallback {
-
-        private final ToolDefinition toolDefinition = DefaultToolDefinition.builder()
-                .name(ASK_USER_TOOL_NAME)
-                .description("Ask the user for missing information required to continue the task.")
-                .inputSchema("""
-                        {
-                          "type": "object",
-                          "properties": {
-                            "question": {"type": "string", "description": "A concise question asking for the missing information"}
-                          },
-                          "required": ["question"]
-                        }
-                        """)
-                .build();
-
-        @Override
-        public ToolDefinition getToolDefinition() {
-            return toolDefinition;
-        }
-
-        @Override
-        public ToolMetadata getToolMetadata() {
-            return ToolMetadata.builder().returnDirect(false).build();
-        }
-
-        @Override
-        public String call(String toolInput) {
-            return toolInput;
-        }
-
-        @Override
-        public String call(String toolInput, ToolContext toolContext) {
-            return call(toolInput);
-        }
     }
 
     private String enrichWithHistory(String conversationId, String userMessage) {

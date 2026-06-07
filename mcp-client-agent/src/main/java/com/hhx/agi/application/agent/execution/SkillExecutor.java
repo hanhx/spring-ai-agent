@@ -1,5 +1,10 @@
-package com.hhx.agi.application.agent;
+package com.hhx.agi.application.agent.execution;
 
+import com.hhx.agi.application.agent.model.PlanActionEvent;
+import com.hhx.agi.application.agent.model.SkillDefinition;
+import com.hhx.agi.application.agent.model.SkillResponse;
+import com.hhx.agi.application.agent.skill.SkillLoader;
+import com.hhx.agi.application.agent.tool.ToolResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
