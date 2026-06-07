@@ -342,30 +342,22 @@ async function sendMessage() {
 
         while (true) {
             const { done, value } = await reader.read();
-            if (done) break;
+            if (done) {
+                buffer += decoder.decode();
+                break;
+            }
             buffer += decoder.decode(value, { stream: true });
 
             let boundary;
             while ((boundary = buffer.indexOf('\n\n')) !== -1) {
                 const block = buffer.substring(0, boundary);
                 buffer = buffer.substring(boundary + 2);
-
-                const lines = block.split('\n');
-                let raw = '';
-                for (const l of lines) {
-                    if (l.startsWith('data:')) raw += l.slice(5);
-                    else if (raw && l.trim()) raw += l;
-                }
-                raw = raw.trim();
-                if (!raw) continue;
-
-                try {
-                    const event = JSON.parse(raw);
-                    finalContent = handleEvent(event, thinkingBlock, resultContainer, finalContent);
-                } catch(e) {
-                    console.warn('SSE parse error:', raw, e);
-                }
+                finalContent = handleSseBlock(block, thinkingBlock, resultContainer, finalContent);
             }
+        }
+
+        if (buffer.trim()) {
+            finalContent = handleSseBlock(buffer, thinkingBlock, resultContainer, finalContent);
         }
     } catch (err) {
         resultContainer.innerHTML = `<span style="color:#ef4444">网络错误: ${escapeHtml(err.message)}</span>`;
@@ -404,12 +396,36 @@ const EVENT_STATUS = Object.freeze({
     DONE: 'done'
 });
 
+function normalizeWireValue(value) {
+    return String(value || '').toLowerCase();
+}
+
+function handleSseBlock(block, thinkingBlock, resultContainer, finalContent) {
+    const lines = block.split('\n');
+    let raw = '';
+    for (const l of lines) {
+        if (l.startsWith('data:')) raw += l.slice(5);
+        else if (raw && l.trim()) raw += l;
+    }
+    raw = raw.trim();
+    if (!raw) return finalContent;
+
+    try {
+        const event = JSON.parse(raw);
+        return handleEvent(event, thinkingBlock, resultContainer, finalContent);
+    } catch(e) {
+        console.warn('SSE parse error:', raw, e);
+        return finalContent;
+    }
+}
+
 // ===== Event Handler =====
 function handleEvent(event, thinkingBlock, resultContainer, finalContent) {
     const toggle = thinkingBlock.querySelector('.thinking-toggle');
     const content = thinkingBlock.querySelector('.thinking-content');
+    const eventType = normalizeWireValue(event.type);
 
-    switch (event.type) {
+    switch (eventType) {
         case EVENT_TYPES.TASK_START:
         case EVENT_TYPES.LEGACY_SKILL_START:
             // 多意图模式：显示子任务分隔标记
@@ -514,11 +530,12 @@ function setPlanSteps(contentEl, steps) {
 
 function updateStepStatus(contentEl, stepNum, status, message, resultContent) {
     const li = ensureStepItem(contentEl, stepNum, message);
+    const normalizedStatus = normalizeWireValue(status);
 
-    if (status === EVENT_STATUS.RUNNING) {
+    if (normalizedStatus === EVENT_STATUS.RUNNING) {
         li.className = 'running';
         li.querySelector('.step-icon').innerHTML = '<span class="spinner-sm"></span>';
-    } else if (status === EVENT_STATUS.DONE) {
+    } else if (normalizedStatus === EVENT_STATUS.DONE) {
         li.className = 'done';
         li.querySelector('.step-icon').innerHTML = '&#10003;';
         if (resultContent) {

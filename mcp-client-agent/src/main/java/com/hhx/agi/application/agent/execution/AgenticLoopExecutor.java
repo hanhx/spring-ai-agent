@@ -19,7 +19,9 @@ import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.model.tool.ToolCallingChatOptions;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Component;
+import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.FluxSink;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
@@ -59,19 +61,31 @@ public class AgenticLoopExecutor {
     }
 
     public Flux<AgentStreamEvent> execute(String conversationId, String userMessage, String model, String userId) {
-        return Flux.defer(() -> Mono.fromCallable(() -> executeBlocking(conversationId, userMessage, model, userId))
-                .subscribeOn(Schedulers.boundedElastic())
-                .flatMapMany(Flux::fromIterable))
-                .onErrorResume(e -> {
-                    log.error("[AgenticLoop] 执行失败: {}", e.getMessage(), e);
-                    return Flux.just(AgentStreamEvent.error("执行出错: " + e.getMessage()), AgentStreamEvent.done());
-                });
+        return Flux.create(sink -> {
+            Disposable disposable = Mono.fromRunnable(() -> {
+                try {
+                    executeBlocking(conversationId, userMessage, model, userId, sink);
+                } catch (Exception e) {
+                    if (!sink.isCancelled()) {
+                        log.error("[AgenticLoop] 执行失败: {}", e.getMessage(), e);
+                        sink.next(AgentStreamEvent.error("执行出错: " + e.getMessage()));
+                        sink.next(AgentStreamEvent.done());
+                    }
+                } finally {
+                    if (!sink.isCancelled()) {
+                        sink.complete();
+                    }
+                }
+            }).subscribeOn(Schedulers.boundedElastic()).subscribe();
+            sink.onCancel(disposable::dispose);
+        });
     }
 
-    private List<AgentStreamEvent> executeBlocking(String conversationId, String userMessage, String model, String userId) {
+    private List<AgentStreamEvent> executeBlocking(String conversationId, String userMessage, String model, String userId,
+                                                   FluxSink<AgentStreamEvent> eventSink) {
         com.hhx.agi.infra.config.UserContext.setUserId(userId);
         try {
-            List<AgentStreamEvent> events = new ArrayList<>();
+            List<AgentStreamEvent> events = new StreamingEventList(eventSink);
             List<Message> messages = new ArrayList<>();
             chatMemory.add(conversationId, new UserMessage(userMessage));
 
@@ -295,5 +309,22 @@ public class AgenticLoopExecutor {
         }
         sb.append("\n## 当前用户消息\n").append(userMessage);
         return sb.toString();
+    }
+
+    private static final class StreamingEventList extends ArrayList<AgentStreamEvent> {
+
+        private final FluxSink<AgentStreamEvent> sink;
+
+        private StreamingEventList(FluxSink<AgentStreamEvent> sink) {
+            this.sink = sink;
+        }
+
+        @Override
+        public boolean add(AgentStreamEvent event) {
+            if (event != null && !sink.isCancelled()) {
+                sink.next(event);
+            }
+            return super.add(event);
+        }
     }
 }

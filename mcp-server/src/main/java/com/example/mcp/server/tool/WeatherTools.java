@@ -54,12 +54,14 @@ public class WeatherTools {
     }
 
     private String queryWttr(String city, boolean forecast, int dayOffset) {
-        if (city == null || city.isBlank()) {
+        String normalizedCity = normalizeCity(city);
+        if (normalizedCity == null || normalizedCity.isBlank()) {
             return "请提供要查询的城市名称。";
         }
-        log.info("[WeatherTools] Query wttr.in, city={}, forecast={}, dayOffset={}", city, forecast, dayOffset);
+        log.info("[WeatherTools] Query wttr.in, city={}, normalizedCity={}, forecast={}, dayOffset={}",
+                city, normalizedCity, forecast, dayOffset);
         try {
-            String encodedCity = URLEncoder.encode(city.trim(), StandardCharsets.UTF_8);
+            String encodedCity = URLEncoder.encode(normalizedCity, StandardCharsets.UTF_8);
             String host = apiHost.endsWith("/") ? apiHost.substring(0, apiHost.length() - 1) : apiHost;
             URI uri = URI.create(host + "/" + encodedCity + "?format=j1&lang=zh");
             HttpURLConnection conn = (HttpURLConnection) uri.toURL().openConnection();
@@ -72,13 +74,33 @@ public class WeatherTools {
             int status = conn.getResponseCode();
             String body = readAll(status >= 200 && status < 300 ? conn.getInputStream() : conn.getErrorStream());
             if (status != 200) {
-                return "无法获取「" + city + "」天气信息，API 状态码: " + status + "\n错误详情: " + truncate(body, 400);
+                return "无法获取「" + normalizedCity + "」天气信息，API 状态码: " + status + "\n错误详情: " + truncate(body, 400);
             }
-            return formatWttr(city, body, forecast, dayOffset);
+            return formatWttr(normalizedCity, body, forecast, dayOffset);
         } catch (Exception e) {
-            log.error("[WeatherTools] wttr.in query failed, city={}, forecast={}, dayOffset={}", city, forecast, dayOffset, e);
-            return "查询「" + city + "」天气时出错: " + e.getMessage();
+            log.error("[WeatherTools] wttr.in query failed, city={}, normalizedCity={}, forecast={}, dayOffset={}",
+                    city, normalizedCity, forecast, dayOffset, e);
+            return "查询「" + normalizedCity + "」天气时出错: " + e.getMessage();
         }
+    }
+
+    private String normalizeCity(String city) {
+        if (city == null) {
+            return null;
+        }
+        String normalized = city.trim();
+        String[] suffixes = {"天气预报", "实时天气", "当前天气", "今日天气", "今天天气", "明天天气", "后天天气", "天气"};
+        boolean changed;
+        do {
+            changed = false;
+            for (String suffix : suffixes) {
+                if (normalized.endsWith(suffix)) {
+                    normalized = normalized.substring(0, normalized.length() - suffix.length()).trim();
+                    changed = true;
+                }
+            }
+        } while (changed);
+        return normalized;
     }
 
     private String readAll(java.io.InputStream input) throws Exception {
