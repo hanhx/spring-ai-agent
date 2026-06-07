@@ -7,6 +7,7 @@ import com.hhx.agi.infra.dao.SkillRegistryMapper;
 import com.hhx.agi.infra.po.SkillRegistryPO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,16 +26,19 @@ public class SkillService {
     private final SkillEmbeddingIndex skillEmbeddingIndex;
     private final DashScopeEmbeddingClient embeddingClient;
     private final SkillLoader skillLoader;
+    private final boolean embeddingEnabled;
 
     public SkillService(
             SkillRegistryMapper skillRegistryMapper,
             SkillEmbeddingIndex skillEmbeddingIndex,
             DashScopeEmbeddingClient embeddingClient,
-            SkillLoader skillLoader) {
+            SkillLoader skillLoader,
+            @Value("${dashscope.embedding.enabled:false}") boolean embeddingEnabled) {
         this.skillRegistryMapper = skillRegistryMapper;
         this.skillEmbeddingIndex = skillEmbeddingIndex;
         this.embeddingClient = embeddingClient;
         this.skillLoader = skillLoader;
+        this.embeddingEnabled = embeddingEnabled;
     }
 
     /**
@@ -203,6 +207,9 @@ public class SkillService {
      * 生成向量
      */
     private float[] generateEmbedding(String name, String description) {
+        if (!embeddingEnabled) {
+            return null;
+        }
         if (name == null || name.isBlank()) {
             return null;
         }

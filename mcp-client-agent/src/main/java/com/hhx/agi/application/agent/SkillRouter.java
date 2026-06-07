@@ -37,16 +37,19 @@ public class SkillRouter {
     private final Map<String, SkillDefinition> skillMap;
     private final SkillDefinition fallbackSkill;
     private final SkillExecutor executor;
+    private final ToolLoopExecutor toolLoopExecutor;
     private final MultiIntentExecutor multiIntentExecutor;
     private final ChatMemory chatMemory;
     private final SkillEmbeddingIndex embeddingIndex;
 
     @Autowired
     public SkillRouter(ChatClient.Builder chatClientBuilder, SkillLoader loader, SkillExecutor executor,
+                       ToolLoopExecutor toolLoopExecutor,
                        MultiIntentExecutor multiIntentExecutor, ChatMemory chatMemory,
                        SkillEmbeddingIndex embeddingIndex) {
         this.chatClientBuilder = chatClientBuilder;
         this.executor = executor;
+        this.toolLoopExecutor = toolLoopExecutor;
         this.multiIntentExecutor = multiIntentExecutor;
         this.chatMemory = chatMemory;
         this.embeddingIndex = embeddingIndex;
@@ -104,40 +107,9 @@ public class SkillRouter {
      */
     public Flux<PlanActionEvent> streamRoute(String conversationId, String userMessage, String model, String userId) {
         log.info("[SkillRouter] 流式请求: {}, model: {}, userId: {}", userMessage, model, userId);
-
         return Flux.concat(
                 Flux.just(PlanActionEvent.planning("🤔 正在理解您的问题...")),
-
-                Flux.defer(() -> {
-                    List<SkillIntent> pending = multiIntentExecutor.popPending(conversationId);
-                    List<SkillIntent> newIntents = identifySkills(conversationId, userMessage);
-                    log.info("[SkillRouter] 识别到 {} 个新意图: {}", newIntents.size(), newIntents);
-
-                    List<SkillIntent> allIntents = multiIntentExecutor.mergeIntents(newIntents, pending);
-                    if (pending != null && !pending.isEmpty()) {
-                        log.info("[SkillRouter] 合并待办意图后共 {} 个: {}", allIntents.size(), allIntents);
-                    }
-
-                    if (allIntents.isEmpty()) {
-                        return Flux.just(PlanActionEvent.error("抱歉，系统暂时无法处理您的请求。"), PlanActionEvent.done());
-                    }
-
-                    // 单意图：直接执行
-                    if (allIntents.size() == 1) {
-                        SkillIntent intent = allIntents.get(0);
-                        SkillDefinition skill = skillMap.getOrDefault(intent.skillName(), fallbackSkill);
-                        if (skill == null) {
-                            return Flux.just(PlanActionEvent.error("抱歉，系统暂时无法处理您的请求。"), PlanActionEvent.done());
-                        }
-                        return Flux.concat(
-                                Flux.just(PlanActionEvent.planning("💡 已理解，正在规划执行方案...")),
-                                executor.planAndExecute(skill, conversationId, intent.subTask(), model, userId)
-                        );
-                    }
-
-                    // 多意图：委托 MultiIntentExecutor
-                    return multiIntentExecutor.execute(conversationId, allIntents, skillMap, fallbackSkill, model, userId);
-                }).subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
+                toolLoopExecutor.execute(conversationId, userMessage, model, userId)
         );
     }
 

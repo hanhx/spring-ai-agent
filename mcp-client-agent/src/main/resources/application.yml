@@ -21,15 +21,15 @@ spring:
   ai:
     openai:
       api-key: ${OPENAI_API_KEY:xxx}
-      base-url: ${OPENAI_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
+      base-url: ${OPENAI_BASE_URL:https://api.deepseek.com}
       chat:
         completions-path: /chat/completions
         options:
-          model: ${OPENAI_MODEL:MiniMax-M2.5}
+          model: ${OPENAI_MODEL:deepseek-v4-flash}
           temperature: 0.3
           max-tokens: 4096
       embedding:
-        enabled: ${EMBEDDING_ENABLED:true}
+        enabled: ${EMBEDDING_ENABLED:false}
         options:
           model: ${EMBEDDING_MODEL:text-embedding-v4}
 
@@ -40,7 +40,14 @@ spring:
 
 # 自管理的 MCP Server 连接列表（McpConnectionManager 读取）
 mcp:
-  servers: "{'business-server': 'http://localhost:9081', 'weather-server': 'http://localhost:9082'}"
+  servers: "{'business-server': 'http://localhost:9081'}"
+
+dashscope:
+  embedding:
+    enabled: ${EMBEDDING_ENABLED:false}
+    model: ${EMBEDDING_MODEL:text-embedding-v4}
+    encoding-format: float
+    base-url: ${EMBEDDING_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings}
 
 # MyBatis Plus 配置
 mybatis-plus:

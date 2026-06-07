@@ -20,7 +20,6 @@
 
     <modules>
         <module>mcp-server</module>
-        <module>mcp-weather-server</module>
         <module>mcp-client-agent</module>
     </modules>
 
