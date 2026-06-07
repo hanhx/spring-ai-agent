@@ -2,8 +2,8 @@ package com.hhx.agi.application.agent.router;
 
 import com.hhx.agi.application.agent.execution.MultiIntentExecutor;
 import com.hhx.agi.application.agent.execution.SkillExecutor;
-import com.hhx.agi.application.agent.execution.ToolLoopExecutor;
-import com.hhx.agi.application.agent.model.PlanActionEvent;
+import com.hhx.agi.application.agent.execution.AgenticLoopExecutor;
+import com.hhx.agi.application.agent.model.AgentStreamEvent;
 import com.hhx.agi.application.agent.model.SkillDefinition;
 import com.hhx.agi.application.agent.model.SkillIntent;
 import com.hhx.agi.application.agent.model.SkillResponse;
@@ -46,19 +46,19 @@ public class SkillRouter {
     private final Map<String, SkillDefinition> skillMap;
     private final SkillDefinition fallbackSkill;
     private final SkillExecutor executor;
-    private final ToolLoopExecutor toolLoopExecutor;
+    private final AgenticLoopExecutor agenticLoopExecutor;
     private final MultiIntentExecutor multiIntentExecutor;
     private final ChatMemory chatMemory;
     private final SkillEmbeddingIndex embeddingIndex;
 
     @Autowired
     public SkillRouter(ChatClient.Builder chatClientBuilder, SkillLoader loader, SkillExecutor executor,
-                       ToolLoopExecutor toolLoopExecutor,
+                       AgenticLoopExecutor agenticLoopExecutor,
                        MultiIntentExecutor multiIntentExecutor, ChatMemory chatMemory,
                        SkillEmbeddingIndex embeddingIndex) {
         this.chatClientBuilder = chatClientBuilder;
         this.executor = executor;
-        this.toolLoopExecutor = toolLoopExecutor;
+        this.agenticLoopExecutor = agenticLoopExecutor;
         this.multiIntentExecutor = multiIntentExecutor;
         this.chatMemory = chatMemory;
         this.embeddingIndex = embeddingIndex;
@@ -112,13 +112,13 @@ public class SkillRouter {
     }
 
     /**
-     * Plan & Action 流式路由 —— 支持多意图 + 待办意图恢复
+     * Agentic Loop 流式路由 —— 当前采用 ReAct 风格，由模型在每轮决定调用工具、追问用户或给出最终回复。
      */
-    public Flux<PlanActionEvent> streamRoute(String conversationId, String userMessage, String model, String userId) {
+    public Flux<AgentStreamEvent> streamRoute(String conversationId, String userMessage, String model, String userId) {
         log.info("[SkillRouter] 流式请求: {}, model: {}, userId: {}", userMessage, model, userId);
         return Flux.concat(
-                Flux.just(PlanActionEvent.planning("🤔 正在理解您的问题...")),
-                toolLoopExecutor.execute(conversationId, userMessage, model, userId)
+                Flux.just(AgentStreamEvent.thinking("🤔 正在理解您的问题...")),
+                agenticLoopExecutor.execute(conversationId, userMessage, model, userId)
         );
     }
 

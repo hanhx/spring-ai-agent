@@ -382,13 +382,36 @@ async function sendMessage() {
     }
 }
 
+const EVENT_TYPES = Object.freeze({
+    TASK_START: 'task_start',
+    LEGACY_SKILL_START: 'skill_start',
+    THINKING: 'thinking',
+    LEGACY_PLANNING: 'planning',
+    PLAN: 'plan',
+    TOOL_CALL: 'tool_call',
+    LEGACY_ACTION: 'action',
+    OBSERVATION: 'observation',
+    LEGACY_OBSERVE: 'observe',
+    REPLAN: 'replan',
+    FINAL_ANSWER: 'final_answer',
+    LEGACY_RESULT: 'result',
+    ERROR: 'error',
+    DONE: 'done'
+});
+
+const EVENT_STATUS = Object.freeze({
+    RUNNING: 'running',
+    DONE: 'done'
+});
+
 // ===== Event Handler =====
 function handleEvent(event, thinkingBlock, resultContainer, finalContent) {
     const toggle = thinkingBlock.querySelector('.thinking-toggle');
     const content = thinkingBlock.querySelector('.thinking-content');
 
     switch (event.type) {
-        case 'skill_start':
+        case EVENT_TYPES.TASK_START:
+        case EVENT_TYPES.LEGACY_SKILL_START:
             // 多意图模式：显示子任务分隔标记
             const skillDiv = document.createElement('div');
             skillDiv.className = 'skill-start-marker';
@@ -399,31 +422,35 @@ function handleEvent(event, thinkingBlock, resultContainer, finalContent) {
             content.classList.add('open');
             break;
 
-        case 'planning':
+        case EVENT_TYPES.THINKING:
+        case EVENT_TYPES.LEGACY_PLANNING:
             updateThinkingLabel(toggle, event.message, true);
             // Auto-open thinking
             toggle.classList.add('open');
             content.classList.add('open');
             break;
 
-        case 'plan':
+        case EVENT_TYPES.PLAN:
             updateThinkingLabel(toggle, '执行计划', true);
             setPlanSteps(content, event.steps);
             break;
 
-        case 'action':
+        case EVENT_TYPES.TOOL_CALL:
+        case EVENT_TYPES.LEGACY_ACTION:
             updateStepStatus(content, event.step, event.status, event.message, event.content);
             break;
 
-        case 'observe':
+        case EVENT_TYPES.OBSERVATION:
+        case EVENT_TYPES.LEGACY_OBSERVE:
             showObservation(content, event.step, event.message);
             break;
 
-        case 'replan':
+        case EVENT_TYPES.REPLAN:
             showReplan(content, event.message, event.steps);
             break;
 
-        case 'result':
+        case EVENT_TYPES.FINAL_ANSWER:
+        case EVENT_TYPES.LEGACY_RESULT:
             finalContent = event.content || '';
             resultContainer.innerHTML = renderMarkdown(finalContent);
             resultContainer.classList.add('result-content');
@@ -432,11 +459,11 @@ function handleEvent(event, thinkingBlock, resultContainer, finalContent) {
             content.classList.remove('open');
             break;
 
-        case 'error':
+        case EVENT_TYPES.ERROR:
             resultContainer.innerHTML = `<span style="color:#ef4444">${escapeHtml(event.message)}</span>`;
             break;
 
-        case 'done':
+        case EVENT_TYPES.DONE:
             finishThinking(thinkingBlock);
             break;
     }
@@ -486,13 +513,12 @@ function setPlanSteps(contentEl, steps) {
 }
 
 function updateStepStatus(contentEl, stepNum, status, message, resultContent) {
-    const li = contentEl.querySelector(`li[data-step="${stepNum}"]`);
-    if (!li) return;
+    const li = ensureStepItem(contentEl, stepNum, message);
 
-    if (status === 'running') {
+    if (status === EVENT_STATUS.RUNNING) {
         li.className = 'running';
         li.querySelector('.step-icon').innerHTML = '<span class="spinner-sm"></span>';
-    } else if (status === 'done') {
+    } else if (status === EVENT_STATUS.DONE) {
         li.className = 'done';
         li.querySelector('.step-icon').innerHTML = '&#10003;';
         if (resultContent) {
@@ -504,6 +530,31 @@ function updateStepStatus(contentEl, stepNum, status, message, resultContent) {
             }
         }
     }
+}
+
+function ensureStepItem(contentEl, stepNum, message) {
+    let stepsEl = contentEl.querySelector('.plan-steps');
+    if (!stepsEl) {
+        stepsEl = document.createElement('ul');
+        stepsEl.className = 'plan-steps';
+        contentEl.appendChild(stepsEl);
+    }
+
+    let li = stepsEl.querySelector(`li[data-step="${stepNum}"]`);
+    if (!li) {
+        li = document.createElement('li');
+        li.className = 'pending';
+        li.dataset.step = stepNum;
+        li.innerHTML = `
+            <div class="step-header">
+                <span class="step-icon">&#9675;</span>
+                <span>${escapeHtml(message || '工具调用')}</span>
+            </div>
+            <div class="step-result result-content"></div>
+        `;
+        stepsEl.appendChild(li);
+    }
+    return li;
 }
 
 function showObservation(contentEl, stepNum, observation) {

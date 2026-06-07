@@ -1,6 +1,6 @@
 package com.hhx.agi.application.agent.execution;
 
-import com.hhx.agi.application.agent.model.PlanActionEvent;
+import com.hhx.agi.application.agent.model.AgentStreamEvent;
 import com.hhx.agi.application.agent.model.SkillDefinition;
 import com.hhx.agi.application.agent.model.SkillIntent;
 import org.slf4j.Logger;
@@ -70,7 +70,7 @@ public class MultiIntentExecutor {
      * 并发策略：单请求内的多个意图均视为独立任务，通过 Flux.merge 并发运行。
      * 追问检测使用结构化 ask_user 事件而非推断 boolean 状态。
      */
-    public Flux<PlanActionEvent> execute(String conversationId, List<SkillIntent> intents,
+    public Flux<AgentStreamEvent> execute(String conversationId, List<SkillIntent> intents,
                                           Map<String, SkillDefinition> skillMap, SkillDefinition fallback, String model, String userId) {
         log.info("[MultiIntent] 共 {} 个子任务, model: {}, userId: {}", intents.size(), model, userId);
         int total = intents.size();
@@ -79,7 +79,7 @@ public class MultiIntentExecutor {
         CopyOnWriteArrayList<String> skillResults = new CopyOnWriteArrayList<>();
 
         // 构建每个意图的执行 Flux
-        List<Flux<PlanActionEvent>> skillFluxes = new ArrayList<>();
+        List<Flux<AgentStreamEvent>> skillFluxes = new ArrayList<>();
         for (int i = 0; i < intents.size(); i++) {
             final int idx = i + 1;
             SkillIntent intent = intents.get(i);
@@ -93,14 +93,14 @@ public class MultiIntentExecutor {
 
             skillFluxes.add(
                 Flux.concat(
-                    Flux.just(PlanActionEvent.skillStart(idx, total, skillName, subTask)),
+                    Flux.just(AgentStreamEvent.taskStart(idx, total, skillName, subTask)),
                     executor.planAndExecute(skill, conversationId, subTask, model, userId)
                         .doOnNext(event -> {
-                            if ("ask_user".equals(event.type())) {
+                            if (event.type() == AgentStreamEvent.Type.ASK_USER) {
                                 askUserDetected.set(true);
                                 log.info("[MultiIntent] Skill [{}] 追问终止", skillName);
                             }
-                            if ("result".equals(event.type()) && event.content() != null) {
+                            if (event.type() == AgentStreamEvent.Type.FINAL_ANSWER && event.content() != null) {
                                 skillResults.add("【" + subTask + "】\n" + event.content());
                             }
                         })
@@ -108,19 +108,19 @@ public class MultiIntentExecutor {
             );
         }
 
-        Flux<PlanActionEvent> header = Flux.just(
-            PlanActionEvent.planning(String.format("💡 识别到 %d 个任务，并发处理中...", total))
+        Flux<AgentStreamEvent> header = Flux.just(
+            AgentStreamEvent.thinking(String.format("💡 识别到 %d 个任务，并发处理中...", total))
         );
 
         // 并发运行所有 Skill
-        Flux<PlanActionEvent> allSkills = Flux.merge(skillFluxes);
+        Flux<AgentStreamEvent> allSkills = Flux.merge(skillFluxes);
 
         // 汇总阶段：所有 Skill 完成后才运行
-        Flux<PlanActionEvent> aggregation = Flux.defer(() -> {
+        Flux<AgentStreamEvent> aggregation = Flux.defer(() -> {
             if (askUserDetected.get() || skillResults.size() <= 1) return Flux.empty();
             log.info("[MultiIntent] 汇总 {} 个结果", skillResults.size());
             return Flux.concat(
-                Flux.just(PlanActionEvent.planning("📝 正在汇总所有任务结果...")),
+                Flux.just(AgentStreamEvent.thinking("📝 正在汇总所有任务结果...")),
                 Mono.fromCallable(() -> {
                     String allResults = String.join("\n\n---\n\n", skillResults);
                     String prompt = """
@@ -133,10 +133,10 @@ public class MultiIntentExecutor {
                             
                             请输出整合后的完整回复：
                             """.formatted(allResults);
-                    return PlanActionEvent.result(
-                        chatClientBuilder.build().prompt().user(prompt).call().content());
+                    return AgentStreamEvent.finalAnswer(
+                            chatClientBuilder.build().prompt().user(prompt).call().content());
                 }).subscribeOn(Schedulers.boundedElastic()),
-                Flux.just(PlanActionEvent.done())
+                Flux.just(AgentStreamEvent.done())
             );
         });
 

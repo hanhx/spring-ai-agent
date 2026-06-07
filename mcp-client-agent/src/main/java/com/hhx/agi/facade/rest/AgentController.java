@@ -2,7 +2,7 @@ package com.hhx.agi.facade.rest;
 
 import com.hhx.agi.infra.config.McpConnectionManager;
 import com.hhx.agi.infra.config.UserContext;
-import com.hhx.agi.application.agent.model.PlanActionEvent;
+import com.hhx.agi.application.agent.model.AgentStreamEvent;
 import com.hhx.agi.application.agent.skill.SkillEmbeddingIndex;
 import com.hhx.agi.application.agent.model.SkillResponse;
 import com.hhx.agi.application.agent.router.SkillRouter;
@@ -67,10 +67,10 @@ public class AgentController {
     }
 
     /**
-     * 流式对话 —— Plan & Action 模式，Flux SSE 逐个推送事件（实时）
+     * 流式对话 —— Agentic Loop 模式，Flux SSE 逐个推送事件（实时）
      */
     @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public Flux<PlanActionEvent> chatStream(
+    public Flux<AgentStreamEvent> chatStream(
             @RequestHeader(value = "X-User-Id", required = false, defaultValue = DEFAULT_USER_ID) String userId,
             @Valid @RequestBody ChatRequest request) {
         log.info("Stream chat request: userId={}, message={}", userId, request.message());

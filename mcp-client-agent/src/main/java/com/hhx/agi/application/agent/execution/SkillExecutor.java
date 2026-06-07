@@ -1,6 +1,6 @@
 package com.hhx.agi.application.agent.execution;
 
-import com.hhx.agi.application.agent.model.PlanActionEvent;
+import com.hhx.agi.application.agent.model.AgentStreamEvent;
 import com.hhx.agi.application.agent.model.SkillDefinition;
 import com.hhx.agi.application.agent.model.SkillResponse;
 import com.hhx.agi.application.agent.skill.SkillLoader;
@@ -126,7 +126,7 @@ public class SkillExecutor {
     /**
      * Plan-and-Execute 流式模式 —— Plan → Execute → Observe → (RePlan?) → Final Answer
      */
-    public Flux<PlanActionEvent> planAndExecute(SkillDefinition skill, String conversationId, String userMessage, String model, String userId) {
+    public Flux<AgentStreamEvent> planAndExecute(SkillDefinition skill, String conversationId, String userMessage, String model, String userId) {
         log.info("[SkillExecutor] Plan&Execute Skill [{}]，用户消息: {}，model: {}，userId: {}", skill.name(), userMessage, model, userId);
 
         // 设置用户上下文（用于同步 JDBC 操作）
@@ -137,15 +137,15 @@ public class SkillExecutor {
         ExecutionContext ctx = new ExecutionContext(skill, conversationId, userMessage, enrichedMessage, model, userId);
 
         Mono<Void> preload = preloadPhase(ctx);
-        Flux<PlanActionEvent> planPhase = planPhase(ctx);
-        Flux<PlanActionEvent> executePhase = executePhase(ctx);
-        Flux<PlanActionEvent> finalPhase = finalPhase(ctx);
+        Flux<AgentStreamEvent> planPhase = planPhase(ctx);
+        Flux<AgentStreamEvent> executePhase = executePhase(ctx);
+        Flux<AgentStreamEvent> finalPhase = finalPhase(ctx);
 
         return Flux.concat(preload.thenMany(explorePhase(ctx)), planPhase, executePhase, finalPhase)
                 .doFinally(signal -> com.hhx.agi.infra.config.UserContext.clear())
                 .onErrorResume(e -> {
                     log.error("[SkillExecutor] Plan&Execute Skill [{}] 出错: {}", skill.name(), e.getMessage(), e);
-                    return Flux.just(PlanActionEvent.error("执行出错: " + e.getMessage()), PlanActionEvent.done());
+                    return Flux.just(AgentStreamEvent.error("执行出错: " + e.getMessage()), AgentStreamEvent.done());
                 });
     }
 
@@ -162,10 +162,10 @@ public class SkillExecutor {
     }
 
     /** Phase 0.5: 信息预取 —— 在规划前调用只读工具收集现有数据（参考 Claude Code ExploreAgent） */
-    private Flux<PlanActionEvent> explorePhase(ExecutionContext ctx) {
+    private Flux<AgentStreamEvent> explorePhase(ExecutionContext ctx) {
         return Flux.concat(
-                Mono.just(PlanActionEvent.planning("正在预取相关信息...")),
-                Mono.<PlanActionEvent>fromRunnable(() -> {
+                Mono.just(AgentStreamEvent.thinking("正在预取相关信息...")),
+                Mono.<AgentStreamEvent>fromRunnable(() -> {
                     try {
                         String result = invokeExplorer(ctx);
                         if (result != null && !result.isBlank()) {
@@ -182,32 +182,32 @@ public class SkillExecutor {
     }
 
     /** Phase 1: 生成初始计划 */
-    private Flux<PlanActionEvent> planPhase(ExecutionContext ctx) {
+    private Flux<AgentStreamEvent> planPhase(ExecutionContext ctx) {
         return Flux.concat(
-                Mono.just(PlanActionEvent.planning("正在分析问题并生成执行计划...")),
+                Mono.just(AgentStreamEvent.thinking("正在分析问题并生成执行计划...")),
                 Mono.fromCallable(() -> {
                     List<String> steps = invokePlanner(ctx, List.of());
                     log.info("[Plan] 初始计划: {}", steps);
                     ctx.addPlan(steps);
-                    return PlanActionEvent.plan(steps);
+                    return AgentStreamEvent.plan(steps);
                 }).subscribeOn(Schedulers.boundedElastic())
         );
     }
 
     /** Phase 2: Execute & Observe 循环 */
-    private Flux<PlanActionEvent> executePhase(ExecutionContext ctx) {
+    private Flux<AgentStreamEvent> executePhase(ExecutionContext ctx) {
         return Flux.defer(() -> executeLoop(ctx)).subscribeOn(Schedulers.boundedElastic());
     }
 
     /** Phase 3: 最终回复 */
-    private Flux<PlanActionEvent> finalPhase(ExecutionContext ctx) {
+    private Flux<AgentStreamEvent> finalPhase(ExecutionContext ctx) {
         return Flux.defer(() -> {
             if (ctx.isAskUserTerminated()) {
                 log.info("[SkillExecutor] Plan&Execute Skill [{}] 因追问用户提前终止，跳过 finalPhase", ctx.skill().name());
-                return Flux.just(PlanActionEvent.done());
+                return Flux.just(AgentStreamEvent.done());
             }
             return Flux.concat(
-                    Mono.just(PlanActionEvent.planning("正在生成最终回复...")),
+                    Mono.just(AgentStreamEvent.thinking("正在生成最终回复...")),
                     Mono.fromCallable(() -> {
                         // 在新线程上重新设置 UserContext
                         com.hhx.agi.infra.config.UserContext.setUserId(ctx.userId());
@@ -215,16 +215,16 @@ public class SkillExecutor {
                         chatMemory.add(ctx.conversationId(), new AssistantMessage(finalAnswer));
                         log.info("[SkillExecutor] Plan&Execute Skill [{}] 完成，共 {} 步，RePlan {} 次",
                                 ctx.skill().name(), ctx.completedSteps().size(), ctx.replanCount());
-                        return PlanActionEvent.result(finalAnswer);
+                        return AgentStreamEvent.finalAnswer(finalAnswer);
                     }).subscribeOn(Schedulers.boundedElastic()),
-                    Mono.just(PlanActionEvent.done())
+                    Mono.just(AgentStreamEvent.done())
             );
         });
     }
 
     // ==================== Execute Loop ====================
 
-    private Flux<PlanActionEvent> executeLoop(ExecutionContext ctx) {
+    private Flux<AgentStreamEvent> executeLoop(ExecutionContext ctx) {
         if (!ctx.hasMoreSteps()) {
             return Flux.empty();
         }
@@ -232,7 +232,7 @@ public class SkillExecutor {
             String msg = "执行步骤过多，已自动停止以避免循环调用。请重试或调整问题范围。";
             log.warn("[SkillExecutor] 命中执行上限({})，conversationId={}", MAX_TOTAL_EXECUTED_STEPS, ctx.conversationId());
             chatMemory.add(ctx.conversationId(), new AssistantMessage(msg));
-            return Flux.just(PlanActionEvent.error(msg), PlanActionEvent.done());
+            return Flux.just(AgentStreamEvent.error(msg), AgentStreamEvent.done());
         }
 
         String currentStep = ctx.currentStep();
@@ -245,7 +245,7 @@ public class SkillExecutor {
             log.warn("[SkillExecutor] 同一步骤重复执行超限({})，step='{}'，conversationId={}",
                     MAX_SAME_STEP_EXECUTIONS, currentStep, ctx.conversationId());
             chatMemory.add(ctx.conversationId(), new AssistantMessage(msg));
-            return Flux.just(PlanActionEvent.error(msg), PlanActionEvent.done());
+            return Flux.just(AgentStreamEvent.error(msg), AgentStreamEvent.done());
         }
 
         // 追问检测 + 上限防御
@@ -255,7 +255,7 @@ public class SkillExecutor {
 
         return Flux.concat(
                 // actionStart
-                Mono.just(PlanActionEvent.actionStart(displayStep, totalSteps, currentStep)),
+                Mono.just(AgentStreamEvent.toolCallStart(displayStep, totalSteps, currentStep)),
 
                 // 执行步骤
                 Mono.fromCallable(() -> {
@@ -264,7 +264,7 @@ public class SkillExecutor {
                             result.length() > 100 ? result.substring(0, 100) + "..." : result);
                     ctx.addCompletedStep(currentStep, result);
                     ctx.incrementExecutedSteps();
-                    return PlanActionEvent.actionDone(displayStep, totalSteps, currentStep, result);
+                    return AgentStreamEvent.toolCallDone(displayStep, totalSteps, currentStep, result);
                 }).subscribeOn(Schedulers.boundedElastic()),
 
                 // 观察 + 可能 replan + 递归
@@ -273,15 +273,15 @@ public class SkillExecutor {
                     String observation = invokeObserver(ctx, currentStep, lastResult.result());
                     log.info("[Observe] Step {}: {}", displayStep, observation);
 
-                    List<PlanActionEvent> events = new ArrayList<>();
-                    events.add(PlanActionEvent.observe(displayStep, observation));
+                    List<AgentStreamEvent> events = new ArrayList<>();
+                    events.add(AgentStreamEvent.observation(displayStep, observation));
 
                     if (shouldReplan(observation, lastResult.result()) && ctx.replanCount() < MAX_REPLAN_ROUNDS) {
                         ctx.incrementReplan();
                         log.info("[RePlan] 第 {} 次重新规划", ctx.replanCount());
                         List<String> newSteps = invokePlanner(ctx, ctx.completedSteps());
                         log.info("[RePlan] 新计划: {}", newSteps);
-                        events.add(PlanActionEvent.replan(observation, newSteps));
+                        events.add(AgentStreamEvent.replan(observation, newSteps));
                         ctx.resetForReplan(newSteps);
                         return Flux.concat(Flux.fromIterable(events), executeLoop(ctx));
                     } else {
@@ -293,20 +293,20 @@ public class SkillExecutor {
     }
 
     /** 处理追问步骤（含上限防御） */
-    private Flux<PlanActionEvent> handleAskUser(ExecutionContext ctx, String currentStep) {
+    private Flux<AgentStreamEvent> handleAskUser(ExecutionContext ctx, String currentStep) {
         int count = ctx.incrementAskUser();
         if (count > MAX_ASK_USER_ROUNDS) {
             log.warn("[SkillExecutor] 追问次数已达上限({})，不再追问，用已有信息兜底回复", MAX_ASK_USER_ROUNDS);
             String fallback = "抱歉，我无法获取足够的信息来完成您的请求。请您提供更完整的信息后再试。";
             ctx.terminateWithAskUser();
             chatMemory.add(ctx.conversationId(), new AssistantMessage(fallback));
-            return Flux.just(PlanActionEvent.result(fallback), PlanActionEvent.done());
+            return Flux.just(AgentStreamEvent.finalAnswer(fallback), AgentStreamEvent.done());
         }
         String question = extractAskUserQuestion(currentStep);
         log.info("[SkillExecutor] 检测到追问步骤(第{}次)，终止执行流，返回问题: {}", count, question);
         ctx.terminateWithAskUser();
         chatMemory.add(ctx.conversationId(), new AssistantMessage(question));
-        return Flux.just(PlanActionEvent.askUser(question), PlanActionEvent.result(question), PlanActionEvent.done());
+        return Flux.just(AgentStreamEvent.askUser(question), AgentStreamEvent.finalAnswer(question), AgentStreamEvent.done());
     }
 
     // ==================== LLM 角色调用 ====================

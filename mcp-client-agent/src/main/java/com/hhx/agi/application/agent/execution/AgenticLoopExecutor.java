@@ -1,6 +1,6 @@
 package com.hhx.agi.application.agent.execution;
 
-import com.hhx.agi.application.agent.model.PlanActionEvent;
+import com.hhx.agi.application.agent.model.AgentStreamEvent;
 import com.hhx.agi.application.agent.model.SkillDefinition;
 import com.hhx.agi.application.agent.tool.AskUserToolCallback;
 import com.hhx.agi.application.agent.tool.SkillToolCallback;
@@ -34,11 +34,11 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @Component
-public class ToolLoopExecutor {
+public class AgenticLoopExecutor {
 
-    private static final Logger log = LoggerFactory.getLogger(ToolLoopExecutor.class);
+    private static final Logger log = LoggerFactory.getLogger(AgenticLoopExecutor.class);
 
-    private static final int MAX_TOOL_LOOP_ROUNDS = 8;
+    private static final int MAX_AGENTIC_LOOP_ROUNDS = 8;
     private static final int MAX_TOOL_CALLS = 20;
     private static final int MAX_CONSECUTIVE_FAILURES = 3;
     private static final String DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash";
@@ -49,8 +49,8 @@ public class ToolLoopExecutor {
     private final SkillToolCallback skillToolCallback;
     private final AskUserToolCallback askUserToolCallback;
 
-    public ToolLoopExecutor(ChatModel chatModel, ChatMemory chatMemory, ToolResolver toolResolver,
-                            SkillToolCallback skillToolCallback, AskUserToolCallback askUserToolCallback) {
+    public AgenticLoopExecutor(ChatModel chatModel, ChatMemory chatMemory, ToolResolver toolResolver,
+                               SkillToolCallback skillToolCallback, AskUserToolCallback askUserToolCallback) {
         this.chatModel = chatModel;
         this.chatMemory = chatMemory;
         this.toolResolver = toolResolver;
@@ -58,26 +58,26 @@ public class ToolLoopExecutor {
         this.askUserToolCallback = askUserToolCallback;
     }
 
-    public Flux<PlanActionEvent> execute(String conversationId, String userMessage, String model, String userId) {
+    public Flux<AgentStreamEvent> execute(String conversationId, String userMessage, String model, String userId) {
         return Flux.defer(() -> Mono.fromCallable(() -> executeBlocking(conversationId, userMessage, model, userId))
                 .subscribeOn(Schedulers.boundedElastic())
                 .flatMapMany(Flux::fromIterable))
                 .onErrorResume(e -> {
-                    log.error("[ToolLoop] 执行失败: {}", e.getMessage(), e);
-                    return Flux.just(PlanActionEvent.error("执行出错: " + e.getMessage()), PlanActionEvent.done());
+                    log.error("[AgenticLoop] 执行失败: {}", e.getMessage(), e);
+                    return Flux.just(AgentStreamEvent.error("执行出错: " + e.getMessage()), AgentStreamEvent.done());
                 });
     }
 
-    private List<PlanActionEvent> executeBlocking(String conversationId, String userMessage, String model, String userId) {
+    private List<AgentStreamEvent> executeBlocking(String conversationId, String userMessage, String model, String userId) {
         com.hhx.agi.infra.config.UserContext.setUserId(userId);
         try {
-            List<PlanActionEvent> events = new ArrayList<>();
+            List<AgentStreamEvent> events = new ArrayList<>();
             List<Message> messages = new ArrayList<>();
             chatMemory.add(conversationId, new UserMessage(userMessage));
 
             messages.add(new SystemMessage(buildSystemPrompt()));
             messages.add(new UserMessage(enrichWithHistory(conversationId, userMessage)));
-            events.add(PlanActionEvent.planning("🤔 正在分析可用 Skill 与 MCP 工具..."));
+            events.add(AgentStreamEvent.thinking("🤔 正在分析可用 Skill 与 MCP 工具..."));
 
             ToolCallback[] allMcpTools = safeAllMcpTools();
             ToolCallback[] activeTools = concat(skillToolCallback, askUserToolCallback, allMcpTools);
@@ -89,7 +89,7 @@ public class ToolLoopExecutor {
             int consecutiveFailures = 0;
             SkillDefinition loadedSkill = null;
 
-            for (int round = 1; round <= MAX_TOOL_LOOP_ROUNDS; round++) {
+            for (int round = 1; round <= MAX_AGENTIC_LOOP_ROUNDS; round++) {
                 ChatResponse response = chatModel.call(new Prompt(messages, buildOptions(normalizeModel(model), activeTools, toolContext)));
                 AssistantMessage assistant = response.getResult().getOutput();
 
@@ -101,10 +101,10 @@ public class ToolLoopExecutor {
                     }
                     chatMemory.add(conversationId, new AssistantMessage(finalAnswer));
                     if (askUserToolCallback.isLikelyAskUserResponse(finalAnswer)) {
-                        events.add(PlanActionEvent.askUser(finalAnswer));
+                        events.add(AgentStreamEvent.askUser(finalAnswer));
                     }
-                    events.add(PlanActionEvent.result(finalAnswer));
-                    events.add(PlanActionEvent.done());
+                    events.add(AgentStreamEvent.finalAnswer(finalAnswer));
+                    events.add(AgentStreamEvent.done());
                     return events;
                 }
 
@@ -115,23 +115,23 @@ public class ToolLoopExecutor {
                     if (totalToolCalls > MAX_TOOL_CALLS) {
                         String msg = "工具调用次数过多，已停止以避免循环调用。";
                         chatMemory.add(conversationId, new AssistantMessage(msg));
-                        events.add(PlanActionEvent.error(msg));
-                        events.add(PlanActionEvent.done());
+                        events.add(AgentStreamEvent.error(msg));
+                        events.add(AgentStreamEvent.done());
                         return events;
                     }
 
                     ToolCallback tool = activeToolMap.get(toolCall.name());
                     String signature = toolCall.name() + ":" + toolCall.arguments();
                     String result;
-                    events.add(PlanActionEvent.actionStart(totalToolCalls, MAX_TOOL_CALLS, toolCall.name()));
+                    events.add(AgentStreamEvent.toolCallStart(totalToolCalls, MAX_TOOL_CALLS, toolCall.name()));
 
                     if (askUserToolCallback.isAskUserTool(toolCall.name())) {
                         result = askUserToolCallback.extractQuestion(toolCall.arguments());
-                        events.add(PlanActionEvent.actionDone(totalToolCalls, MAX_TOOL_CALLS, toolCall.name(), result));
+                        events.add(AgentStreamEvent.toolCallDone(totalToolCalls, MAX_TOOL_CALLS, toolCall.name(), result));
                         chatMemory.add(conversationId, new AssistantMessage(result));
-                        events.add(PlanActionEvent.askUser(result));
-                        events.add(PlanActionEvent.result(result));
-                        events.add(PlanActionEvent.done());
+                        events.add(AgentStreamEvent.askUser(result));
+                        events.add(AgentStreamEvent.finalAnswer(result));
+                        events.add(AgentStreamEvent.done());
                         return events;
                     }
 
@@ -153,7 +153,7 @@ public class ToolLoopExecutor {
                     } else {
                         consecutiveFailures = 0;
                     }
-                    events.add(PlanActionEvent.actionDone(totalToolCalls, MAX_TOOL_CALLS, toolCall.name(), result));
+                    events.add(AgentStreamEvent.toolCallDone(totalToolCalls, MAX_TOOL_CALLS, toolCall.name(), result));
 
                     Object loaded = toolContext.remove(SkillToolCallback.CONTEXT_KEY);
                     if (loaded instanceof SkillDefinition skill) {
@@ -162,7 +162,7 @@ public class ToolLoopExecutor {
                         activeTools = concat(skillToolCallback, askUserToolCallback, skillTools);
                         activeToolMap = toToolMap(activeTools);
                         pendingContextMessages.add(new SystemMessage(buildLoadedSkillPrompt(skill, result)));
-                        events.add(PlanActionEvent.observe(totalToolCalls, "已加载 Skill: " + skill.name() + "，后续工具范围已收敛到 allowedTools。"));
+                        events.add(AgentStreamEvent.observation(totalToolCalls, "已加载 Skill: " + skill.name() + "，后续工具范围已收敛到 allowedTools。"));
                     }
 
                     observations.append("- 工具: ").append(toolCall.name()).append("\n")
@@ -178,16 +178,16 @@ public class ToolLoopExecutor {
                             ? "连续工具调用失败，已停止。请补充更明确的信息后重试。"
                             : "Skill [" + loadedSkill.name() + "] 连续工具调用失败，已停止。请补充更明确的信息后重试。";
                     chatMemory.add(conversationId, new AssistantMessage(msg));
-                    events.add(PlanActionEvent.error(msg));
-                    events.add(PlanActionEvent.done());
+                    events.add(AgentStreamEvent.error(msg));
+                    events.add(AgentStreamEvent.done());
                     return events;
                 }
             }
 
             String msg = "执行轮次过多，已停止以避免循环调用。";
             chatMemory.add(conversationId, new AssistantMessage(msg));
-            events.add(PlanActionEvent.error(msg));
-            events.add(PlanActionEvent.done());
+            events.add(AgentStreamEvent.error(msg));
+            events.add(AgentStreamEvent.done());
             return events;
         } finally {
             com.hhx.agi.infra.config.UserContext.clear();
@@ -210,14 +210,14 @@ public class ToolLoopExecutor {
             return model;
         }
         if (model != null && !model.isBlank()) {
-            log.warn("[ToolLoop] 前端传入不支持的模型 [{}]，已切换为 {}", model, DEFAULT_DEEPSEEK_MODEL);
+            log.warn("[AgenticLoop] 前端传入不支持的模型 [{}]，已切换为 {}", model, DEFAULT_DEEPSEEK_MODEL);
         }
         return DEFAULT_DEEPSEEK_MODEL;
     }
 
     private String buildSystemPrompt() {
         return """
-                你是一个 Claude Code 风格的工具循环 Agent。
+                你是一个 Claude Code 风格的 Agentic Loop Agent。
 
                 可用 Skills:
                 %s
@@ -248,7 +248,7 @@ public class ToolLoopExecutor {
         try {
             return toolResolver.getAllTools().values().toArray(new ToolCallback[0]);
         } catch (Exception e) {
-            log.warn("[ToolLoop] 获取 MCP 工具失败，仅启用 SkillTool: {}", e.getMessage());
+            log.warn("[AgenticLoop] 获取 MCP 工具失败，仅启用 SkillTool: {}", e.getMessage());
             return new ToolCallback[0];
         }
     }
