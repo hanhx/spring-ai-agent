@@ -2,6 +2,7 @@ package com.hhx.agi.application.agent.tool;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.hhx.agi.application.agent.execution.AgentErrorFormatter;
 import com.hhx.agi.application.agent.model.SkillDefinition;
 import com.hhx.agi.application.agent.skill.SkillLoader;
 import org.springframework.ai.tool.ToolCallback;
@@ -91,7 +92,7 @@ public class SkillToolCallback implements ToolCallback {
             result.put("message", "Skill 已加载，请严格遵循 prompt，并只使用 allowedTools 中的 MCP 工具。若信息不足，直接追问用户。");
             return OBJECT_MAPPER.writeValueAsString(result);
         } catch (Exception e) {
-            return error("SkillTool 执行失败: " + describeException(e));
+            return error("SkillTool 执行失败: " + AgentErrorFormatter.userFacing(e));
         }
     }
 
@@ -162,13 +163,6 @@ public class SkillToolCallback implements ToolCallback {
     private String readText(JsonNode root, String field) {
         JsonNode node = root.get(field);
         return node == null || node.isNull() ? null : node.asText();
-    }
-
-    private String describeException(Exception e) {
-        if (e.getMessage() != null && !e.getMessage().isBlank()) {
-            return e.getMessage();
-        }
-        return e.getClass().getSimpleName();
     }
 
     private String error(String message) {

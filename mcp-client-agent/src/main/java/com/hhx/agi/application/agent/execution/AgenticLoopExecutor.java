@@ -1,9 +1,13 @@
 package com.hhx.agi.application.agent.execution;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hhx.agi.application.agent.model.AgentStreamEvent;
 import com.hhx.agi.application.agent.model.SkillDefinition;
+import com.hhx.agi.application.agent.tool.AgentToolCallback;
 import com.hhx.agi.application.agent.tool.AskUserToolCallback;
 import com.hhx.agi.application.agent.tool.SkillToolCallback;
+import com.hhx.agi.application.agent.tool.TaskToolCallback;
 import com.hhx.agi.application.agent.tool.ToolResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,20 +48,26 @@ public class AgenticLoopExecutor {
     private static final int MAX_TOOL_CALLS = 20;
     private static final int MAX_CONSECUTIVE_FAILURES = 3;
     private static final String DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash";
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private final ChatModel chatModel;
     private final ChatMemory chatMemory;
     private final ToolResolver toolResolver;
     private final SkillToolCallback skillToolCallback;
     private final AskUserToolCallback askUserToolCallback;
+    private final AgentToolCallback agentToolCallback;
+    private final TaskToolCallback taskToolCallback;
 
     public AgenticLoopExecutor(ChatModel chatModel, ChatMemory chatMemory, ToolResolver toolResolver,
-                               SkillToolCallback skillToolCallback, AskUserToolCallback askUserToolCallback) {
+                               SkillToolCallback skillToolCallback, AskUserToolCallback askUserToolCallback,
+                               AgentToolCallback agentToolCallback, TaskToolCallback taskToolCallback) {
         this.chatModel = chatModel;
         this.chatMemory = chatMemory;
         this.toolResolver = toolResolver;
         this.skillToolCallback = skillToolCallback;
         this.askUserToolCallback = askUserToolCallback;
+        this.agentToolCallback = agentToolCallback;
+        this.taskToolCallback = taskToolCallback;
     }
 
     public Flux<AgentStreamEvent> execute(String conversationId, String userMessage, String model, String userId) {
@@ -67,8 +77,8 @@ public class AgenticLoopExecutor {
                     executeBlocking(conversationId, userMessage, model, userId, sink);
                 } catch (Exception e) {
                     if (!sink.isCancelled()) {
-                        log.error("[AgenticLoop] 执行失败: {}", e.getMessage(), e);
-                        sink.next(AgentStreamEvent.error("执行出错: " + e.getMessage()));
+                        log.error("[AgenticLoop] 执行失败: {}", AgentErrorFormatter.technical(e), e);
+                        sink.next(AgentStreamEvent.error("执行出错: " + AgentErrorFormatter.userFacing(e)));
                         sink.next(AgentStreamEvent.done());
                     }
                 } finally {
@@ -94,17 +104,38 @@ public class AgenticLoopExecutor {
             events.add(AgentStreamEvent.thinking("🤔 正在分析可用 Skill 与 MCP 工具..."));
 
             ToolCallback[] allMcpTools = safeAllMcpTools();
-            ToolCallback[] activeTools = concat(skillToolCallback, askUserToolCallback, allMcpTools);
+            ToolCallback[] activeTools = concat(skillToolCallback, askUserToolCallback, agentToolCallback, taskToolCallback, allMcpTools);
             Map<String, ToolCallback> activeToolMap = toToolMap(activeTools);
             Map<String, Object> toolContext = new LinkedHashMap<>();
+            toolContext.put("model", normalizeModel(model));
+            toolContext.put("conversationId", conversationId);
             Set<String> calledSignatures = new LinkedHashSet<>();
 
             int totalToolCalls = 0;
             int consecutiveFailures = 0;
             SkillDefinition loadedSkill = null;
+            String lastSuccessfulObservation = null;
 
             for (int round = 1; round <= MAX_AGENTIC_LOOP_ROUNDS; round++) {
-                ChatResponse response = chatModel.call(new Prompt(messages, buildOptions(normalizeModel(model), activeTools, toolContext)));
+                ChatResponse response;
+                try {
+                    response = chatModel.call(new Prompt(messages, buildOptions(normalizeModel(model), activeTools, toolContext)));
+                } catch (Exception e) {
+                    String error = AgentErrorFormatter.userFacing(e);
+                    log.warn("[AgenticLoop] 模型调用失败: {}", AgentErrorFormatter.technical(e), e);
+                    if (lastSuccessfulObservation != null && !lastSuccessfulObservation.isBlank()) {
+                        String fallback = "模型在整理最终回答时超时/失败，但已成功拿到工具结果：\n\n"
+                                + lastSuccessfulObservation
+                                + "\n\n请以以上工具结果为准。";
+                        chatMemory.add(conversationId, new AssistantMessage(fallback));
+                        events.add(AgentStreamEvent.finalAnswer(fallback));
+                        events.add(AgentStreamEvent.done());
+                        return events;
+                    }
+                    events.add(AgentStreamEvent.error("模型调用失败: " + error));
+                    events.add(AgentStreamEvent.done());
+                    return events;
+                }
                 AssistantMessage assistant = response.getResult().getOutput();
 
                 if (!assistant.hasToolCalls()) {
@@ -158,7 +189,7 @@ public class AgenticLoopExecutor {
                         try {
                             result = tool.call(toolCall.arguments(), new ToolContext(toolContext));
                         } catch (Exception e) {
-                            result = "执行失败: " + e.getMessage();
+                            result = "执行失败: " + AgentErrorFormatter.userFacing(e);
                         }
                     }
 
@@ -167,14 +198,18 @@ public class AgenticLoopExecutor {
                     } else {
                         consecutiveFailures = 0;
                     }
-                    events.add(AgentStreamEvent.toolCallDone(totalToolCalls, MAX_TOOL_CALLS, toolCall.name(), displayToolResult(toolCall.name(), result)));
+                    String displayResult = displayToolResult(toolCall.name(), result);
+                    events.add(AgentStreamEvent.toolCallDone(totalToolCalls, MAX_TOOL_CALLS, toolCall.name(), displayResult));
+                    if (!isFailure(result) && !skillToolCallback.isSkillTool(toolCall.name())) {
+                        lastSuccessfulObservation = "工具: " + toolCall.name() + "\n结果: " + displayResult;
+                    }
 
                     SkillDefinition loaded = loadedSkillFromToolResult(toolCall.name(), result);
                     if (loaded != null) {
                         SkillDefinition skill = loaded;
                         loadedSkill = skill;
                         ToolCallback[] skillTools = toolResolver.resolveTools(skill);
-                        activeTools = concat(skillToolCallback, askUserToolCallback, skillTools);
+                        activeTools = concat(skillToolCallback, askUserToolCallback, agentToolCallback, taskToolCallback, skillTools);
                         activeToolMap = toToolMap(activeTools);
                         pendingContextMessages.add(new SystemMessage(buildLoadedSkillPrompt(skill, result)));
                         events.add(AgentStreamEvent.observation(totalToolCalls, "已加载 Skill: " + skill.name() + "，后续工具范围已收敛到 allowedTools。"));
@@ -241,10 +276,17 @@ public class AgenticLoopExecutor {
                 - 当用户任务匹配某个 Skill 时，必须先调用 SkillTool 加载该 Skill，不要直接回答。
                 - SkillTool 只负责加载 Skill 上下文；真正业务查询或操作必须继续调用 MCP 工具完成。
                 - 如果没有匹配 Skill，但已有 MCP 工具足以完成任务，可以直接调用 MCP 工具。
+                - 当任务复杂、多步骤、需要独立调研或验证时，可以调用 Agent 工具委派给子 Agent。
+                - Agent 工具的 prompt 必须自包含；子 Agent 看不到当前对话历史。
+                - Agent 工具结果是内部观察，不会自动展示给用户；必须由你综合后给出 final_answer。
+                - 不要为了简单的单次工具查询调用 Agent 工具。
                 - 每次工具返回后，根据结果决定继续调用工具、追问用户或最终回答。
                 - 不要编造工具结果中不存在的信息。
                 - 如果信息不足，必须调用 AskUser 工具提出一个具体问题，不要把追问作为普通最终回答直接输出。
-                """.formatted(skillToolCallback.renderAvailableSkills());
+
+                可用子 Agent 类型:
+                %s
+                """.formatted(skillToolCallback.renderAvailableSkills(), agentToolCallback.renderAvailableAgents());
     }
 
     private String buildLoadedSkillPrompt(SkillDefinition skill, String skillToolResult) {
@@ -268,12 +310,14 @@ public class AgenticLoopExecutor {
         }
     }
 
-    private ToolCallback[] concat(ToolCallback first, ToolCallback second, ToolCallback[] rest) {
-        ToolCallback[] result = new ToolCallback[(rest == null ? 0 : rest.length) + 2];
+    private ToolCallback[] concat(ToolCallback first, ToolCallback second, ToolCallback third, ToolCallback fourth, ToolCallback[] rest) {
+        ToolCallback[] result = new ToolCallback[(rest == null ? 0 : rest.length) + 4];
         result[0] = first;
         result[1] = second;
+        result[2] = third;
+        result[3] = fourth;
         if (rest != null && rest.length > 0) {
-            System.arraycopy(rest, 0, result, 2, rest.length);
+            System.arraycopy(rest, 0, result, 4, rest.length);
         }
         return result;
     }
@@ -302,7 +346,43 @@ public class AgenticLoopExecutor {
         if (skillToolCallback.isSkillTool(toolName)) {
             return skillToolCallback.toDisplayResult(result);
         }
+        if (agentToolCallback.isAgentTool(toolName)) {
+            return agentToolCallback.toDisplayResult(result);
+        }
+        return displayGenericToolResult(result);
+    }
+
+    private String displayGenericToolResult(String result) {
+        if (result == null || result.isBlank()) {
+            return result;
+        }
+        try {
+            JsonNode root = OBJECT_MAPPER.readTree(result);
+            if (root.isArray()) {
+                List<String> texts = new ArrayList<>();
+                for (JsonNode item : root) {
+                    String text = readText(item, "text");
+                    if (text != null && !text.isBlank()) {
+                        texts.add(text.trim());
+                    }
+                }
+                if (!texts.isEmpty()) {
+                    return String.join("\n", texts);
+                }
+            }
+            String text = readText(root, "text");
+            if (text != null && !text.isBlank()) {
+                return text.trim();
+            }
+        } catch (Exception ignored) {
+            // 非 JSON 工具结果按原文本展示。
+        }
         return result;
+    }
+
+    private String readText(JsonNode root, String field) {
+        JsonNode node = root.get(field);
+        return node == null || node.isNull() ? null : node.asText();
     }
 
     private String enrichWithHistory(String conversationId, String userMessage) {
